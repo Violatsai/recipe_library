@@ -1,0 +1,453 @@
+<style>
+  :root {
+    --ground:   #F7F5F0;
+    --panel:    #FCFBF8;
+    --raise:    #FFFFFF;
+    --ink:      #201D18;
+    --muted:    #6E675E;
+    --faint:    #9A9289;
+    --line:     #E5E0D6;
+    --line-soft:#EEEAE1;
+    --accent:   #4B6B39;
+    --accent-2: #3C5A2D;
+    --accent-soft: #EAF0E1;
+    --flag:     #A16913;
+    --flag-soft:#F5EAD4;
+    --code-bg:  #F1EDE4;
+    --code-ink: #2C2820;
+    --cm:       #8A8375;
+    --shadow:   0 1px 2px rgba(32,29,24,.04), 0 8px 24px rgba(32,29,24,.05);
+    --radius:   10px;
+    --font-display: "Iowan Old Style","Palatino Linotype",Palatino,"Book Antiqua",Georgia,serif;
+    --font-body: system-ui,-apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+    --font-mono: ui-monospace,"SF Mono","JetBrains Mono",Menlo,Consolas,monospace;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --ground:   #16150F;
+      --panel:    #1D1B15;
+      --raise:    #232019;
+      --ink:      #ECE6DA;
+      --muted:    #A69E90;
+      --faint:    #746D60;
+      --line:     #302C23;
+      --line-soft:#282419;
+      --accent:   #9DBE72;
+      --accent-2: #B0CE86;
+      --accent-soft: #242A1B;
+      --flag:     #D7A64C;
+      --flag-soft:#2C2617;
+      --code-bg:  #201E16;
+      --code-ink: #D9D3C6;
+      --cm:       #7E7767;
+      --shadow:   0 1px 2px rgba(0,0,0,.25), 0 10px 28px rgba(0,0,0,.30);
+    }
+  }
+  :root[data-theme="light"] {
+    --ground:#F7F5F0; --panel:#FCFBF8; --raise:#FFFFFF; --ink:#201D18; --muted:#6E675E;
+    --faint:#9A9289; --line:#E5E0D6; --line-soft:#EEEAE1; --accent:#4B6B39; --accent-2:#3C5A2D;
+    --accent-soft:#EAF0E1; --flag:#A16913; --flag-soft:#F5EAD4; --code-bg:#F1EDE4; --code-ink:#2C2820;
+    --cm:#8A8375; --shadow:0 1px 2px rgba(32,29,24,.04),0 8px 24px rgba(32,29,24,.05);
+  }
+  :root[data-theme="dark"] {
+    --ground:#16150F; --panel:#1D1B15; --raise:#232019; --ink:#ECE6DA; --muted:#A69E90;
+    --faint:#746D60; --line:#302C23; --line-soft:#282419; --accent:#9DBE72; --accent-2:#B0CE86;
+    --accent-soft:#242A1B; --flag:#D7A64C; --flag-soft:#2C2617; --code-bg:#201E16; --code-ink:#D9D3C6;
+    --cm:#7E7767; --shadow:0 1px 2px rgba(0,0,0,.25),0 10px 28px rgba(0,0,0,.30);
+  }
+
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--ground);
+    color: var(--ink);
+    font-family: var(--font-body);
+    font-size: 16px;
+    line-height: 1.62;
+    -webkit-font-smoothing: antialiased;
+  }
+  .wrap { max-width: 860px; margin: 0 auto; padding: clamp(28px,5vw,72px) clamp(20px,5vw,40px) 96px; }
+
+  /* ---- Header ---- */
+  .masthead { border-bottom: 1px solid var(--line); padding-bottom: 28px; margin-bottom: 40px; }
+  .kicker {
+    font-family: var(--font-mono);
+    font-size: 12px; letter-spacing: .13em; text-transform: uppercase;
+    color: var(--accent); font-weight: 600; margin: 0 0 14px;
+    display: flex; gap: 10px; align-items: center;
+  }
+  .kicker::before { content:""; width: 22px; height: 1px; background: var(--accent); display:inline-block; }
+  h1 {
+    font-family: var(--font-display);
+    font-weight: 600; font-size: clamp(30px,5vw,46px);
+    line-height: 1.08; letter-spacing: -.01em; margin: 0 0 16px;
+    text-wrap: balance;
+  }
+  .lede { font-size: clamp(16px,2.2vw,18px); color: var(--muted); max-width: 60ch; margin: 0; }
+  .meta {
+    display: flex; flex-wrap: wrap; gap: 8px 20px; margin-top: 22px;
+    font-family: var(--font-mono); font-size: 12.5px; color: var(--faint);
+  }
+  .meta b { color: var(--muted); font-weight: 600; }
+
+  /* ---- Pipeline ---- */
+  .flow {
+    display: flex; align-items: stretch; gap: 0; margin: 34px 0 8px;
+    background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius);
+    box-shadow: var(--shadow); overflow: hidden;
+  }
+  .node { flex: 1; padding: 18px 16px; position: relative; }
+  .node + .node { border-left: 1px solid var(--line-soft); }
+  .node .n { font-family: var(--font-mono); font-size: 11px; color: var(--accent); font-weight: 600; }
+  .node .t { font-family: var(--font-display); font-size: 17px; margin: 4px 0 3px; }
+  .node .d { font-size: 12.5px; color: var(--muted); line-height: 1.4; }
+  @media (max-width: 620px) {
+    .flow { flex-direction: column; }
+    .node + .node { border-left: 0; border-top: 1px solid var(--line-soft); }
+  }
+
+  /* ---- Layer sections ---- */
+  .layer { margin-top: 56px; scroll-margin-top: 20px; }
+  .layer-head { display: flex; align-items: baseline; gap: 14px; margin-bottom: 6px; }
+  .layer-num {
+    font-family: var(--font-mono); font-size: 13px; font-weight: 600;
+    color: var(--accent); letter-spacing: .04em;
+  }
+  h2 {
+    font-family: var(--font-display); font-weight: 600;
+    font-size: clamp(23px,3.4vw,30px); letter-spacing: -.01em; margin: 0; line-height: 1.15;
+  }
+  .layer > p { color: var(--muted); max-width: 66ch; }
+  h3 {
+    font-family: var(--font-body); font-weight: 650; font-size: 14px;
+    letter-spacing: .02em; text-transform: uppercase; color: var(--ink);
+    margin: 30px 0 12px; display:flex; align-items:center; gap:9px;
+  }
+  h3::before { content:""; width:6px; height:6px; border-radius:2px; background: var(--accent); flex:none; }
+  p { margin: 0 0 15px; }
+  strong { color: var(--ink); font-weight: 650; }
+  a { color: var(--accent-2); text-underline-offset: 2px; }
+
+  /* ---- Cards holding code ---- */
+  .card {
+    background: var(--panel); border: 1px solid var(--line);
+    border-radius: var(--radius); box-shadow: var(--shadow);
+    margin: 14px 0 20px; overflow: hidden;
+  }
+  .card-bar {
+    display: flex; align-items: center; gap: 10px;
+    padding: 10px 16px; border-bottom: 1px solid var(--line-soft);
+    background: var(--raise);
+  }
+  .card-bar .tbl { font-family: var(--font-mono); font-size: 13px; font-weight: 600; color: var(--ink); }
+  .card-bar .rel { font-family: var(--font-mono); font-size: 11.5px; color: var(--faint); margin-left: auto; }
+  pre {
+    margin: 0; padding: 16px; overflow-x: auto;
+    font-family: var(--font-mono); font-size: 12.9px; line-height: 1.62;
+    color: var(--code-ink); background: var(--code-bg); tab-size: 2;
+  }
+  pre.plain { border-radius: var(--radius); border: 1px solid var(--line); box-shadow: var(--shadow); }
+  .cm { color: var(--cm); }
+  .kw { color: var(--accent-2); font-weight: 600; }
+  .fl { color: var(--flag); }
+
+  code {
+    font-family: var(--font-mono); font-size: .88em;
+    background: var(--code-bg); color: var(--code-ink);
+    padding: 1px 5px; border-radius: 5px;
+  }
+
+  /* ---- Callouts ---- */
+  .call {
+    border: 1px solid var(--line); border-left: 3px solid var(--accent);
+    background: var(--accent-soft); border-radius: 8px;
+    padding: 14px 18px; margin: 16px 0; font-size: 14.5px;
+  }
+  .call.flag { border-left-color: var(--flag); background: var(--flag-soft); }
+  .call .lbl {
+    font-family: var(--font-mono); font-size: 11px; letter-spacing: .1em;
+    text-transform: uppercase; font-weight: 700; color: var(--accent-2);
+    display: block; margin-bottom: 5px;
+  }
+  .call.flag .lbl { color: var(--flag); }
+  .call p:last-child { margin-bottom: 0; }
+
+  /* ---- Decision log ---- */
+  .log { list-style: none; margin: 4px 0 0; padding: 0; }
+  .log li {
+    display: grid; grid-template-columns: 148px 1fr; gap: 4px 20px;
+    padding: 14px 0; border-top: 1px solid var(--line-soft);
+  }
+  .log li:first-child { border-top: 0; }
+  .log .k {
+    font-family: var(--font-mono); font-size: 12px; font-weight: 600;
+    color: var(--accent-2); letter-spacing: .02em; padding-top: 1px;
+  }
+  .log .v { color: var(--muted); font-size: 14.5px; }
+  .log .v b { color: var(--ink); }
+  @media (max-width: 560px) { .log li { grid-template-columns: 1fr; gap: 3px; } }
+
+  /* ---- Later list ---- */
+  .later { display: grid; gap: 10px; margin-top: 8px; }
+  .later .row {
+    display: flex; gap: 12px; padding: 13px 16px;
+    background: var(--panel); border: 1px solid var(--line); border-radius: 8px;
+    font-size: 14px;
+  }
+  .later .row .pin { color: var(--flag); font-family: var(--font-mono); font-weight: 700; flex: none; }
+  .later .row .x { color: var(--muted); }
+  .later .row .x b { color: var(--ink); }
+
+  footer {
+    margin-top: 60px; padding-top: 22px; border-top: 1px solid var(--line);
+    font-family: var(--font-mono); font-size: 12px; color: var(--faint);
+    display: flex; justify-content: space-between; flex-wrap: wrap; gap: 8px;
+  }
+
+  a:focus-visible, .node:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; border-radius: 3px; }
+
+  .layer, .flow { animation: rise .5s cubic-bezier(.2,.7,.3,1) both; }
+  .layer:nth-of-type(1){animation-delay:.02s}
+  @keyframes rise { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
+  @media (prefers-reduced-motion: reduce) { .layer, .flow { animation: none; } }
+</style>
+
+<div class="wrap">
+
+  <header class="masthead">
+    <p class="kicker">Architecture Reference</p>
+    <h1>Recipe Library</h1>
+    <p class="lede">A personal system that turns bookmarked recipes — from web pages and YouTube — into a structured, searchable library you can cook from and plan meals against, by chatting with an agent.</p>
+    <div class="meta">
+      <span><b>Scope</b> single-user side project</span>
+      <span><b>Store</b> Postgres + pgvector</span>
+      <span><b>Models</b> Claude · embedding model</span>
+    </div>
+  </header>
+
+  <div class="flow" aria-label="Data flow across the four layers">
+    <div class="node">
+      <div class="n">01</div>
+      <div class="t">Capture</div>
+      <div class="d">Extension grabs a page or video; ingestion extracts, scores macros, tags, embeds.</div>
+    </div>
+    <div class="node">
+      <div class="n">02</div>
+      <div class="t">Library</div>
+      <div class="d">Structured recipes, ingredients, taxonomy, meal plans — the shared core.</div>
+    </div>
+    <div class="node">
+      <div class="n">03</div>
+      <div class="t">Agent + Tools</div>
+      <div class="d">One toolset over the library: search, plan, build a grocery list.</div>
+    </div>
+    <div class="node">
+      <div class="n">04</div>
+      <div class="t">Chat UI</div>
+      <div class="d">One thread for "what can I cook?" and "plan my week."</div>
+    </div>
+  </div>
+
+  <!-- LAYER 1 -->
+  <section class="layer">
+    <div class="layer-head"><span class="layer-num">01</span><h2>Capture &amp; ingestion</h2></div>
+    <p>The extension sends raw source content to an ingestion worker. Three source types collapse into <strong>two extraction strategies</strong> — fetch a clean page, or extract from a transcript — so most of the pipeline is shared.</p>
+
+    <h3>Source decision tree</h3>
+    <pre class="plain"><span class="cm"># Web page</span>
+schema.org/Recipe JSON-LD present?  ──yes──▶  parse directly (free, no LLM)
+                                    ──no───▶  LLM extraction over page text
+                                              (vision fallback for JS-heavy / image recipes)
+
+<span class="cm"># YouTube</span>
+recipe URL in description?  ──yes──▶  web_fetch the linked page  ──▶  (same as web page)
+                            ──no───▶  LLM extraction over transcript + description
+                                      (primary path for Shorts)</pre>
+
+    <p>Whichever strategy runs, one structured-output pass produces the whole record — Claude returns validated JSON matching the recipe schema, so there is no free-form parsing to babysit.</p>
+
+    <h3>What the ingestion pass produces</h3>
+    <div class="card">
+      <div class="card-bar"><span class="tbl">extraction → one structured call</span></div>
+<pre><span class="cm">// all emitted together, per recipe:</span>
+title, servings, total_time, steps[]
+ingredients[]          <span class="cm">// name · quantity · unit · raw_text</span>
+defining_ingredients[] <span class="cm">// Claude flags which ones characterize the dish → embedding</span>
+tags                   <span class="cm">// classified into the approved controlled vocabulary</span>
+macros                 <span class="cm">// ballpark, per serving — see below</span></pre>
+    </div>
+
+    <div class="call flag">
+      <span class="lbl">Macros — ballpark by design</span>
+      <p>Estimated by the LLM, not looked up. Claude estimates per-ingredient values from knowledge, then does the summing arithmetic inside the <code>code_execution</code> tool (deterministic math where LLMs are weak), divided by servings. Computed <strong>once at ingestion</strong> and stored. The <code>estimated</code> flag is data, not prose — the UI renders a consistent "≈ estimated" badge.</p>
+    </div>
+
+    <div class="call">
+      <span class="lbl">Embedding string</span>
+      <p>Built from <strong>title + defining ingredients + tags</strong> — not the full ingredient list, and never the cooking steps. Claude flags the <em>defining</em> ingredients in the same pass, so a spoon of miso survives while salt and water drop out. One vector per recipe, from a dedicated embedding model, written at ingestion. Changing this string later means re-embedding the library.</p>
+    </div>
+  </section>
+
+  <!-- LAYER 2 -->
+  <section class="layer">
+    <div class="layer-head"><span class="layer-num">02</span><h2>Recipe library — schema</h2></div>
+    <p>Postgres for the structured queries meal planning needs; pgvector for semantic search. Everything the agent touches lives here. No users table — single-user.</p>
+
+    <h3>Core</h3>
+    <div class="card">
+      <div class="card-bar"><span class="tbl">recipes</span><span class="rel">one row per recipe</span></div>
+<pre>id              <span class="kw">uuid</span> pk
+title           <span class="kw">text</span>
+source_url      <span class="kw">text</span>
+source_type     <span class="kw">text</span>            <span class="cm">-- 'web' | 'youtube'</span>
+source_detail   <span class="kw">text</span>            <span class="cm">-- resolved recipe URL from a YT description</span>
+servings        <span class="kw">int</span>
+total_time_min  <span class="kw">int</span>
+steps           <span class="kw">jsonb</span>           <span class="cm">-- ordered array of step strings</span>
+description     <span class="kw">text</span>            <span class="cm">-- raw captured text, for re-extraction</span>
+kcal            <span class="kw">numeric</span>         <span class="cm">-- ballpark macros, per serving ↓</span>
+protein_g       <span class="kw">numeric</span>
+carbs_g         <span class="kw">numeric</span>
+fat_g           <span class="kw">numeric</span>
+macros_estimated <span class="kw">bool</span>  <span class="fl">default true</span>   <span class="cm">-- drives the "≈ estimated" badge</span>
+macros_method   <span class="kw">text</span>  default 'llm_estimate'
+embedding       <span class="kw">vector(1536)</span>    <span class="cm">-- title + defining ingredients + tags</span>
+created_at      <span class="kw">timestamptz</span> default now()</pre>
+    </div>
+
+    <div class="card">
+      <div class="card-bar"><span class="tbl">ingredients</span><span class="rel">recipe_id → recipes</span></div>
+<pre>id          <span class="kw">uuid</span> pk
+recipe_id   <span class="kw">uuid</span> fk
+name        <span class="kw">text</span>       <span class="cm">-- normalized: "garlic"</span>
+quantity    <span class="kw">numeric</span>    <span class="cm">-- nullable ("a pinch")</span>
+unit        <span class="kw">text</span>       <span class="cm">-- 'g','ml','clove','tbsp' · nullable</span>
+raw_text    <span class="kw">text</span>       <span class="cm">-- original line, fallback when parse fails</span></pre>
+    </div>
+
+    <h3>Taxonomy — controlled vocabulary</h3>
+    <div class="card">
+      <div class="card-bar"><span class="tbl">tag_categories · tags · recipe_tags</span></div>
+<pre><span class="kw">tag_categories</span>   id('cuisine'|'dish_type'|'dietary'), label
+
+<span class="kw">tags</span>             id, category fk, value, status
+                 <span class="cm">-- status: 'approved' | 'pending'  ← the whole growth mechanism</span>
+                 <span class="cm">-- unique(category, value)</span>
+
+<span class="kw">recipe_tags</span>      recipe_id fk, tag_id fk   <span class="cm">-- pk(recipe_id, tag_id)</span></pre>
+    </div>
+    <p>Claude classifies into <strong>approved</strong> tags; anything genuinely new is emitted as <strong>pending</strong> for review (or auto-approve after N sightings). User can rename / merge / delete tags — because they're rows, changes propagate through <code>recipe_tags</code> automatically.</p>
+
+    <h3>Meal planning</h3>
+    <div class="card">
+      <div class="card-bar"><span class="tbl">meal_plans · meal_plan_recipes</span></div>
+<pre><span class="kw">meal_plans</span>          id, title, start_date, created_at
+
+<span class="kw">meal_plan_recipes</span>   id, meal_plan_id fk, recipe_id fk,
+                    day, meal_slot,   <span class="cm">-- both nullable</span>
+                    servings          <span class="cm">-- planned; may differ from recipe default</span></pre>
+    </div>
+    <div class="card">
+      <div class="card-bar"><span class="tbl">grocery_lists · grocery_items · pantry_staples</span></div>
+<pre><span class="kw">grocery_lists</span>    id, meal_plan_id fk, created_at
+
+<span class="kw">grocery_items</span>    id, grocery_list_id fk, name, quantity, unit,
+                 checked  <span class="cm">-- tick off while shopping</span>
+
+<span class="kw">pantry_staples</span>   id, name   <span class="cm">-- user-managed; subtracted from generated lists</span></pre>
+    </div>
+
+    <div class="call flag">
+      <span class="lbl">Two staple lists — don't conflate</span>
+      <p><code>pantry_staples</code> = ingredients you keep at home (user-declared, drives grocery subtraction). That is a <strong>different mechanism</strong> from the embedding's defining-ingredients (Claude's per-recipe judgment about what characterizes the dish). They overlap in content — salt is in both — but are managed and used separately.</p>
+    </div>
+  </section>
+
+  <!-- LAYER 3 -->
+  <section class="layer">
+    <div class="layer-head"><span class="layer-num">03</span><h2>Agent + tools</h2></div>
+    <p>One agent, one shared toolset. "What's in my fridge?" (retrieval) and "plan my week" (planning) are two conversations against the same tools — so the agent can chain <em>find → plan → grocery list</em> in a single thread.</p>
+
+    <h3>Read — safe, parallel</h3>
+    <div class="card">
+      <div class="card-bar"><span class="tbl">search_recipes()</span><span class="rel">hybrid: vector + SQL</span></div>
+<pre>search_recipes(
+  query: <span class="kw">str</span>,            <span class="cm">// natural language → embedded → pgvector rank</span>
+  must_have:   [<span class="kw">str</span>],     <span class="cm">// hard filter</span>
+  must_exclude:[<span class="kw">str</span>],     <span class="cm">// HARD filter — never semantic</span>
+  cuisine:     [<span class="kw">str</span>],     <span class="cm">// tag filters</span>
+  dish_type:   [<span class="kw">str</span>],
+  dietary:     [<span class="kw">str</span>],     <span class="cm">// HARD filter — never semantic</span>
+  max_time_min:<span class="kw">int</span>,
+  limit:       <span class="kw">int</span>
+) → [{ id, title, cuisine, dish_type, macros, match_reason }]
+
+get_recipe(id) → { full steps, ingredients, macros, tags, source_url }</pre>
+    </div>
+    <p>The tool does the embedding call and the DB query — the agent only passes text. The approved tag vocabulary is <strong>injected into the agent's system prompt</strong> so it can map "something Japanese" to a valid filter with no extra round-trip.</p>
+
+    <div class="call">
+      <span class="lbl">The one strict rule</span>
+      <p><code>must_exclude</code> and <code>dietary</code> are <strong>hard SQL filters applied before semantic ranking</strong> — never left to embedding similarity. "No peanuts" is an allergy, not a ranking preference; a close-but-wrong match is a real problem. Only the free-text <code>query</code> takes the fuzzy vector path.</p>
+    </div>
+
+    <h3>Write — meal planning</h3>
+    <div class="card">
+      <div class="card-bar"><span class="tbl">plan + grocery tools</span></div>
+<pre>create_meal_plan(title, start_date) → meal_plan_id
+add_recipe_to_plan(meal_plan_id, recipe_id, day?, meal_slot?, servings?)
+
+generate_grocery_list(meal_plan_id)
+  → [{ name, quantity, unit, from_recipe }]   <span class="cm">// raw lines, quantities PRE-SCALED</span>
+save_grocery_list(meal_plan_id, items[]) → grocery_list_id</pre>
+    </div>
+
+    <div class="call">
+      <span class="lbl">Grocery aggregation — split by what each side is good at</span>
+      <p><strong>Deterministic scaling</strong> (planned ÷ recipe servings) happens in the tool. Then <strong>one agent pass</strong> does everything fuzzy: merging duplicate lines ("these three are all chicken, ≈ X total") <em>and</em> dropping pantry staples in the same step — using the same fuzzy matching to catch "sea salt" ≈ "salt". The cleaned result is persisted via <code>save_grocery_list</code>.</p>
+    </div>
+
+    <div class="call flag">
+      <span class="lbl">Gating boundary — nothing to build yet</span>
+      <p>All current tools are internal, single-user, reversible — no confirmation needed. The seam to watch: the first <strong>outward</strong> action (order from Instacart, email the list) is hard to reverse and <em>should</em> be gated behind explicit confirmation.</p>
+    </div>
+  </section>
+
+  <!-- LAYER 4 -->
+  <section class="layer">
+    <div class="layer-head"><span class="layer-num">04</span><h2>Chat UI</h2></div>
+    <p>A single web app and a single chat surface is the entry point for both retrieval and planning — potentially the same persistent thread rather than two screens. It renders the agent's tool results: recipe cards, a week's plan, an editable grocery list with staples already removed.</p>
+  </section>
+
+  <!-- DECISIONS -->
+  <section class="layer">
+    <div class="layer-head"><span class="layer-num">★</span><h2>Settled decisions</h2></div>
+    <ul class="log">
+      <li><span class="k">ingestion</span><span class="v"><b>JSON-LD first</b>, LLM fallback. YouTube link-in-description → <code>web_fetch</code>. Three sources → two strategies.</span></li>
+      <li><span class="k">macros</span><span class="v"><b>LLM ballpark</b> via <code>code_execution</code>, at ingestion, per serving, <code>estimated</code> flag. No nutrition DB.</span></li>
+      <li><span class="k">tags</span><span class="v"><b>Controlled vocabulary only</b>, 3 axes, pending→approved growth. Injected in prompt (not a <code>list_tags</code> tool — yet).</span></li>
+      <li><span class="k">embedding</span><span class="v"><b>title + defining ingredients + tags</b>; Claude flags defining ones; dedicated embedding model; at ingestion.</span></li>
+      <li><span class="k">search</span><span class="v"><b>Hybrid.</b> Exclusions &amp; dietary are hard filters; only free-text query is semantic.</span></li>
+      <li><span class="k">grocery</span><span class="v"><b>Deterministic scaling</b> in tool; fuzzy merge + staple removal in one agent pass.</span></li>
+      <li><span class="k">models</span><span class="v">Extraction: try <b>Sonnet / Haiku</b> first (test accuracy). Agent: Claude. Embeddings: dedicated model.</span></li>
+      <li><span class="k">stack</span><span class="v"><b>Postgres + pgvector</b>, MV3 extension, minimal / no auth (single-user).</span></li>
+    </ul>
+  </section>
+
+  <!-- LATER -->
+  <section class="layer">
+    <div class="layer-head"><span class="layer-num">⋯</span><h2>Deferred — known seams</h2></div>
+    <div class="later">
+      <div class="row"><span class="pin">→</span><span class="x"><b>Chat persistence.</b> A <code>conversations</code>/<code>messages</code> pair if you want thread history — independent of the recipe data.</span></div>
+      <div class="row"><span class="pin">→</span><span class="x"><b><code>list_tags</code> migration.</b> When the vocabulary grows large, switch from in-prompt injection to a category-scoped tool. Localized change; search interface unaffected.</span></div>
+      <div class="row"><span class="pin">→</span><span class="x"><b>Outward-action gating.</b> Add confirmation the moment a tool reaches outside (ordering, emailing).</span></div>
+      <div class="row"><span class="pin">→</span><span class="x"><b>Soft staple handling.</b> Option to show staples in an "assumed on hand" section instead of hard-dropping — same underlying match.</span></div>
+    </div>
+  </section>
+
+  <footer>
+    <span>Recipe Library · architecture reference</span>
+    <span>capture → library → agent → chat</span>
+  </footer>
+
+</div>
