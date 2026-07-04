@@ -255,16 +255,25 @@
 
     <h3>Source decision tree</h3>
     <pre class="plain"><span class="cm"># Web page</span>
-schema.org/Recipe JSON-LD present?  ──yes──▶  parse directly (free, no LLM)
-                                    ──no───▶  LLM extraction over page text
+schema.org/Recipe JSON-LD present?  ──yes──▶  parse → clean structured input to the LLM pass
+                                    ──no───▶  raw page text to the LLM pass
                                               (vision fallback for JS-heavy / image recipes)
 
 <span class="cm"># YouTube</span>
 recipe URL in description?  ──yes──▶  web_fetch the linked page  ──▶  (same as web page)
-                            ──no───▶  LLM extraction over transcript + description
-                                      (primary path for Shorts)</pre>
+                            ──no───▶  transcript + description to the LLM pass
+                                      (primary path for Shorts; transcript is best-effort)
+
+<span class="cm"># Either way: EVERY recipe gets exactly one LLM enrichment pass
+# (extraction where needed, tags, macros, defining ingredients) + one embedding call.
+# JSON-LD doesn't skip the pass — it makes the input cleaner and cheaper.</span></pre>
 
     <p>Whichever strategy runs, one structured-output pass produces the whole record — Claude returns validated JSON matching the recipe schema, so there is no free-form parsing to babysit.</p>
+
+    <div class="call">
+      <span class="lbl">Dedup at the front door</span>
+      <p><code>recipes.source_url</code> is normalized (tracking params stripped) and carries a <strong>unique index</strong>; ingestion upserts on conflict, so re-saving a bookmark updates the existing row instead of creating a twin — and the extension can report "already saved." Same-dish-from-a-different-URL isn't caught by this; see Deferred.</p>
+    </div>
 
     <h3>What the ingestion pass produces</h3>
     <div class="card">
@@ -279,7 +288,7 @@ macros                 <span class="cm">// ballpark, per serving — see below</
 
     <div class="call flag">
       <span class="lbl">Macros — ballpark by design</span>
-      <p>Estimated by the LLM, not looked up. Claude estimates per-ingredient values from knowledge, then does the summing arithmetic inside the <code>code_execution</code> tool (deterministic math where LLMs are weak), divided by servings. Computed <strong>once at ingestion</strong> and stored. The <code>estimated</code> flag is data, not prose — the UI renders a consistent "≈ estimated" badge.</p>
+      <p>Estimated by the LLM, not looked up: per-ingredient values from knowledge, summed and divided by servings <strong>in-context within the same pass</strong>. No <code>code_execution</code> step — the per-ingredient estimates carry ±20–30% error, so exact arithmetic on top of them buys nothing but an extra round-trip. Computed <strong>once at ingestion</strong> and stored. The <code>estimated</code> flag is data, not prose — the UI renders a consistent "≈ estimated" badge.</p>
     </div>
 
     <div class="call">
@@ -298,7 +307,7 @@ macros                 <span class="cm">// ballpark, per serving — see below</
       <div class="card-bar"><span class="tbl">recipes</span><span class="rel">one row per recipe</span></div>
 <pre>id              <span class="kw">uuid</span> pk
 title           <span class="kw">text</span>
-source_url      <span class="kw">text</span>
+source_url      <span class="kw">text</span> <span class="fl">unique</span>     <span class="cm">-- normalized; upsert on conflict → dedup</span>
 source_type     <span class="kw">text</span>            <span class="cm">-- 'web' | 'youtube'</span>
 source_detail   <span class="kw">text</span>            <span class="cm">-- resolved recipe URL from a YT description</span>
 servings        <span class="kw">int</span>
@@ -331,12 +340,12 @@ raw_text    <span class="kw">text</span>       <span class="cm">-- original line
 <pre><span class="kw">tag_categories</span>   id('cuisine'|'dish_type'|'dietary'), label
 
 <span class="kw">tags</span>             id, category fk, value, status
-                 <span class="cm">-- status: 'approved' | 'pending'  ← the whole growth mechanism</span>
+                 <span class="cm">-- status: 'approved' | 'pending' — kept for an optional review mode later</span>
                  <span class="cm">-- unique(category, value)</span>
 
 <span class="kw">recipe_tags</span>      recipe_id fk, tag_id fk   <span class="cm">-- pk(recipe_id, tag_id)</span></pre>
     </div>
-    <p>Claude classifies into <strong>approved</strong> tags; anything genuinely new is emitted as <strong>pending</strong> for review (or auto-approve after N sightings). User can rename / merge / delete tags — because they're rows, changes propagate through <code>recipe_tags</code> automatically.</p>
+    <p>Claude classifies into existing tags first and proposes a new value only when nothing fits — and new tags are <strong>auto-approved immediately</strong>. At single-user scale a review queue means <em>you</em> are the review queue; cleanup happens instead through rename / merge / delete, which propagate through <code>recipe_tags</code> automatically because tags are rows. The <code>status</code> column stays in the schema so a review mode can be switched on later if vocabulary drift actually materializes.</p>
 
     <h3>Meal planning</h3>
     <div class="card">
@@ -374,21 +383,21 @@ raw_text    <span class="kw">text</span>       <span class="cm">-- original line
 <pre>search_recipes(
   query: <span class="kw">str</span>,            <span class="cm">// natural language → embedded → pgvector rank</span>
   must_have:   [<span class="kw">str</span>],     <span class="cm">// hard filter</span>
-  must_exclude:[<span class="kw">str</span>],     <span class="cm">// HARD filter — never semantic</span>
+  must_exclude:[<span class="kw">str</span>],     <span class="cm">// SQL pre-filter — never semantic; best-effort coverage</span>
   cuisine:     [<span class="kw">str</span>],     <span class="cm">// tag filters</span>
   dish_type:   [<span class="kw">str</span>],
-  dietary:     [<span class="kw">str</span>],     <span class="cm">// HARD filter — never semantic</span>
+  dietary:     [<span class="kw">str</span>],     <span class="cm">// SQL pre-filter — never semantic; best-effort coverage</span>
   max_time_min:<span class="kw">int</span>,
   limit:       <span class="kw">int</span>
-) → [{ id, title, cuisine, dish_type, macros, match_reason }]
+) → [{ id, title, cuisine, dish_type, macros }]
 
 get_recipe(id) → { full steps, ingredients, macros, tags, source_url }</pre>
     </div>
     <p>The tool does the embedding call and the DB query — the agent only passes text. The approved tag vocabulary is <strong>injected into the agent's system prompt</strong> so it can map "something Japanese" to a valid filter with no extra round-trip.</p>
 
     <div class="call">
-      <span class="lbl">The one strict rule</span>
-      <p><code>must_exclude</code> and <code>dietary</code> are <strong>hard SQL filters applied before semantic ranking</strong> — never left to embedding similarity. "No peanuts" is an allergy, not a ranking preference; a close-but-wrong match is a real problem. Only the free-text <code>query</code> takes the fuzzy vector path.</p>
+      <span class="lbl">Hard pre-filters, best-effort coverage</span>
+      <p><code>must_exclude</code> and <code>dietary</code> are <strong>SQL filters applied before semantic ranking</strong> — never left to embedding similarity, since "no peanuts" is an allergy, not a ranking preference. But coverage is honestly best-effort, not a guarantee: exclusion matches against both ingredient <code>name</code> and <code>raw_text</code>, expanded through a small per-allergen alias list (peanut → groundnut, satay, …), and <code>dietary</code> tags are LLM-inferred at ingestion with known failure modes (soy sauce contains gluten). Treat these as convenience filters; the source link is always shown so the user can verify. Only the free-text <code>query</code> takes the fuzzy vector path.</p>
     </div>
 
     <h3>Write — meal planning</h3>
@@ -423,15 +432,25 @@ save_grocery_list(meal_plan_id, items[]) → grocery_list_id</pre>
   <section class="layer">
     <div class="layer-head"><span class="layer-num">★</span><h2>Settled decisions</h2></div>
     <ul class="log">
-      <li><span class="k">ingestion</span><span class="v"><b>JSON-LD first</b>, LLM fallback. YouTube link-in-description → <code>web_fetch</code>. Three sources → two strategies.</span></li>
-      <li><span class="k">macros</span><span class="v"><b>LLM ballpark</b> via <code>code_execution</code>, at ingestion, per serving, <code>estimated</code> flag. No nutrition DB.</span></li>
-      <li><span class="k">tags</span><span class="v"><b>Controlled vocabulary only</b>, 3 axes, pending→approved growth. Injected in prompt (not a <code>list_tags</code> tool — yet).</span></li>
-      <li><span class="k">embedding</span><span class="v"><b>title + defining ingredients + tags</b>; Claude flags defining ones; dedicated embedding model; at ingestion.</span></li>
-      <li><span class="k">search</span><span class="v"><b>Hybrid.</b> Exclusions &amp; dietary are hard filters; only free-text query is semantic.</span></li>
+      <li><span class="k">ingestion</span><span class="v"><b>JSON-LD as clean input</b> where present; every recipe gets exactly one LLM enrichment pass. YouTube link-in-description → <code>web_fetch</code>. Re-saves dedupe via unique normalized <code>source_url</code> + upsert.</span></li>
+      <li><span class="k">macros</span><span class="v"><b>LLM ballpark, in-context arithmetic</b> (no <code>code_execution</code>), at ingestion, per serving, <code>estimated</code> flag. No nutrition DB.</span></li>
+      <li><span class="k">tags</span><span class="v"><b>Controlled vocabulary only</b>, 3 axes, new tags auto-approved; merge/rename is the cleanup mechanism. Injected in prompt (not a <code>list_tags</code> tool — yet).</span></li>
+      <li><span class="k">embedding</span><span class="v"><b>title + defining ingredients + tags</b>; Claude flags defining ones; dedicated embedding model; at ingestion, from day one.</span></li>
+      <li><span class="k">search</span><span class="v"><b>Hybrid.</b> Exclusions &amp; dietary are SQL pre-filters (best-effort: name + raw_text + allergen aliases); only free-text query is semantic.</span></li>
       <li><span class="k">grocery</span><span class="v"><b>Deterministic scaling</b> in tool; fuzzy merge + staple removal in one agent pass.</span></li>
       <li><span class="k">models</span><span class="v">Extraction: try <b>Sonnet / Haiku</b> first (test accuracy). Agent: Claude. Embeddings: dedicated model.</span></li>
       <li><span class="k">stack</span><span class="v"><b>Postgres + pgvector</b>, MV3 extension, minimal / no auth (single-user).</span></li>
     </ul>
+  </section>
+
+  <!-- RISKS -->
+  <section class="layer">
+    <div class="layer-head"><span class="layer-num">!</span><h2>Implementation risks</h2></div>
+    <div class="later">
+      <div class="row"><span class="pin">!</span><span class="x"><b>YouTube transcripts are the flakiest dependency.</b> The official Data API doesn't expose captions for videos you don't own; unofficial scrapers break periodically. Description-first always; transcript best-effort with graceful partial saves.</span></div>
+      <div class="row"><span class="pin">!</span><span class="x"><b><code>web_fetch</code> will bounce off bot-blocked recipe sites.</b> Fallback: the extension <em>is</em> a browser — it fetches client-side and ships raw HTML up. The ingestion API accepts both "here's a URL" and "here's raw HTML" from day one.</span></div>
+      <div class="row"><span class="pin">!</span><span class="x"><b>Hosted ingestion API needs a key.</b> If not localhost, at least a static API key even single-user — otherwise anyone with the URL can write to the library.</span></div>
+    </div>
   </section>
 
   <!-- LATER -->
@@ -442,6 +461,8 @@ save_grocery_list(meal_plan_id, items[]) → grocery_list_id</pre>
       <div class="row"><span class="pin">→</span><span class="x"><b><code>list_tags</code> migration.</b> When the vocabulary grows large, switch from in-prompt injection to a category-scoped tool. Localized change; search interface unaffected.</span></div>
       <div class="row"><span class="pin">→</span><span class="x"><b>Outward-action gating.</b> Add confirmation the moment a tool reaches outside (ordering, emailing).</span></div>
       <div class="row"><span class="pin">→</span><span class="x"><b>Soft staple handling.</b> Option to show staples in an "assumed on hand" section instead of hard-dropping — same underlying match.</span></div>
+      <div class="row"><span class="pin">→</span><span class="x"><b>Semantic dedup.</b> URL-dedup won't catch the same dish saved from two sites; embedding similarity at save time ("looks like a recipe you already have") is a natural later add.</span></div>
+      <div class="row"><span class="pin">→</span><span class="x"><b>Re-enrichment on edit.</b> If servings or ingredients are edited, re-run macros + embedding; nothing recomputes automatically today.</span></div>
     </div>
   </section>
 
