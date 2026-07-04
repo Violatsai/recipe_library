@@ -320,7 +320,7 @@ carbs_g         <span class="kw">numeric</span>
 fat_g           <span class="kw">numeric</span>
 macros_estimated <span class="kw">bool</span>  <span class="fl">default true</span>   <span class="cm">-- drives the "≈ estimated" badge</span>
 macros_method   <span class="kw">text</span>  default 'llm_estimate'
-embedding       <span class="kw">vector(1536)</span>    <span class="cm">-- title + defining ingredients + tags</span>
+embedding       <span class="kw">vector(1024)</span>    <span class="cm">-- title + defining ingredients + tags (Voyage voyage-4-lite)</span>
 created_at      <span class="kw">timestamptz</span> default now()</pre>
     </div>
 

@@ -89,7 +89,7 @@ recipes                          -- one row per recipe
   fat_g           numeric
   macros_estimated bool default true    -- drives the "≈ estimated" badge
   macros_method   text default 'llm_estimate'
-  embedding       vector(1536)   -- title + defining ingredients + tags
+  embedding       vector(1024)   -- title + defining ingredients + tags (Voyage voyage-4-lite)
   created_at      timestamptz default now()
 
 ingredients                      -- recipe_id → recipes

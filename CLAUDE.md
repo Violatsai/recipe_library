@@ -24,7 +24,7 @@ and YouTube; a Claude-powered agent searches the library and plans meals over ch
 
 ## Commands (once scaffolded, M0+)
 
-- `docker compose up -d` — Postgres (pgvector)
+- `brew services start postgresql@18` — Postgres (pgvector installed via brew; no Docker in this project)
 - `npm run migrate` — apply `server/db/migrations/*.sql` in order
 - `npm run dev:server` / `npm run dev:web` — dev servers
 - `npm test` — vitest

@@ -32,13 +32,13 @@ are already made — the executor's job is faithful implementation, not redesign
 |---|---|---|
 | Language | TypeScript everywhere (server, extension, web) | per ARCHITECTURE.md stack lean |
 | Server | Node 20+, Express 4 | plain REST, JSON only |
-| DB | Postgres 16 + pgvector via `docker-compose` (`pgvector/pgvector:pg16`) | swap to hosted later = change `DATABASE_URL` only |
+| DB | **Native Postgres 18 + pgvector via Homebrew** (`brew install postgresql@18 pgvector`) | no Docker anywhere in this project; the brew pgvector formula builds against postgresql@17/@18 — do **not** pair it with an older postgres |
 | DB access | raw SQL via `pg` | no ORM |
 | Migrations | plain `.sql` files in `server/db/migrations/`, applied in filename order by a small runner script, tracked in a `schema_migrations` table | |
 | Validation | `zod` | shared where convenient |
 | LLM (enrichment) | Anthropic `claude-sonnet-5`, structured outputs via `client.messages.parse` | revisit-later note: try `claude-haiku-4-5` for cost once accuracy is baselined |
 | LLM (agent) | Anthropic `claude-sonnet-5`, tool loop via `client.beta.messages.toolRunner` + `betaZodTool` | |
-| Embeddings | OpenAI `text-embedding-3-small` (1536 dims — matches `vector(1536)`) | isolated in one module (`embed.ts`) so the provider is swappable |
+| Embeddings | Voyage AI `voyage-4-lite` (1024 dims — matches `vector(1024)`); official Anthropic-recommended embeddings partner; 200M free tokens ≈ free forever at this scale | isolated in one module (`embed.ts`) so the provider is swappable |
 | Article extraction | `@mozilla/readability` + `jsdom` | for pages without JSON-LD |
 | YouTube metadata | YouTube Data API v3 (title, description) | official, free API key |
 | YouTube transcripts | `youtube-transcript` npm | unofficial, **best-effort**: always wrapped in try/catch, failure is not an error |
@@ -61,7 +61,6 @@ are already made — the executor's job is faithful implementation, not redesign
 ```
 recipe_library/
 ├─ package.json                 # npm workspaces: server, extension, web
-├─ docker-compose.yml           # postgres w/ pgvector
 ├─ .env.example
 ├─ server/
 │  ├─ package.json
@@ -103,9 +102,9 @@ recipe_library/
 
 | Var | Used by | Notes |
 |---|---|---|
-| `DATABASE_URL` | server | `postgres://recipe:recipe@localhost:5432/recipes` |
+| `DATABASE_URL` | server | `postgres://localhost:5432/recipes` (brew default: current macOS user, trust auth) |
 | `ANTHROPIC_API_KEY` | server | enrichment + agent |
-| `OPENAI_API_KEY` | server | embeddings only |
+| `VOYAGE_API_KEY` | server | embeddings only (free account at voyageai.com) |
 | `YOUTUBE_API_KEY` | server | Data API v3 |
 | `INGEST_API_KEY` | server + extension | static shared secret for POST /api/ingest |
 | `PORT` | server | default 3001 |
@@ -114,23 +113,29 @@ recipe_library/
 
 ## M0 — Scaffold & infrastructure
 
-**Goal:** monorepo skeleton, database container, server that boots and can reach the DB.
+**Goal:** monorepo skeleton, native Postgres running, server that boots and can reach the DB.
 
 Steps:
 1. Root `package.json` with npm workspaces `["server", "extension", "web"]`; root `.gitignore`
    (node_modules, dist, .env, *.local), `.env.example` with all vars above.
-2. `docker-compose.yml`: service `db`, image `pgvector/pgvector:pg16`, env
-   `POSTGRES_USER=recipe POSTGRES_PASSWORD=recipe POSTGRES_DB=recipes`, port `5432:5432`,
-   named volume.
+2. Database (native, no Docker). Run — and record in the README verbatim:
+   ```sh
+   brew install postgresql@18 pgvector
+   brew services start postgresql@18
+   export PATH="$(brew --prefix postgresql@18)/bin:$PATH"   # postgresql@18 is keg-only
+   createdb recipes
+   ```
+   If `postgresql@18` is unavailable, `postgresql@17` is the only acceptable substitute
+   (the brew pgvector formula builds against 17/18 — never pair it with an older postgres).
 3. `server` workspace: express, pg, zod, dotenv, tsx (dev runner), typescript, vitest.
    `src/index.ts` with `GET /health` → `{ ok: true, db: <SELECT 1 works> }`.
    `src/config.ts` fails fast with a clear message when a required env var is missing.
 4. Root scripts: `dev:server`, `migrate`, `test`.
 
-**Done when:** `docker compose up -d` then `npm run dev:server` then
+**Done when:** `brew services list` shows postgresql@18 `started`; `npm run dev:server` then
 `curl localhost:3001/health` → `{"ok":true,"db":true}`.
 
-**Commit:** `M0: scaffold monorepo, docker postgres, server skeleton`
+**Commit:** `M0: scaffold monorepo, native postgres setup, server skeleton`
 
 ---
 
@@ -143,7 +148,7 @@ Steps:
    applies unapplied `db/migrations/*.sql` in sorted order, each in a transaction.
 2. `001_init.sql` — exactly the ARCHITECTURE.md schema, plus the approved additions:
    - `CREATE EXTENSION IF NOT EXISTS vector;`
-   - `recipes` (all fields; `source_url text UNIQUE NOT NULL`; `embedding vector(1536)`;
+   - `recipes` (all fields; `source_url text UNIQUE NOT NULL`; `embedding vector(1024)`;
      `extraction_partial bool NOT NULL DEFAULT false`; `updated_at timestamptz NOT NULL DEFAULT now()`)
    - `ingredients`, `tag_categories`, `tags` (with `status text NOT NULL DEFAULT 'approved'`,
      `UNIQUE(category, value)`), `recipe_tags`, `meal_plans`, `meal_plan_recipes`,
@@ -202,8 +207,10 @@ Steps:
      salt does not);
    - estimate ballpark per-serving macros in-context (sum ingredient estimates ÷ servings);
    - set `partial: true` if the source was too thin for a confident extraction.
-5. `embed.ts`: `embedText(text) → number[]` (OpenAI, `text-embedding-3-small`). Build the
-   embed string exactly: `"{title}. Ingredients: {defining ingredients, comma-sep}. {Category: value pairs for each tag}"`.
+5. `embed.ts`: `embedText(text, kind: 'document' | 'query') → number[]` (Voyage,
+   `voyage-4-lite` — Appendix D). Ingestion embeds with `kind='document'`; search queries
+   (M6) embed with `kind='query'`. Build the embed string exactly:
+   `"{title}. Ingredients: {defining ingredients, comma-sep}. {Category: value pairs for each tag}"`.
 6. `pipeline.ts` (transaction):
    - upsert `recipes` on `source_url` conflict (update all fields, bump `updated_at`);
    - delete + reinsert `ingredients` for the recipe;
@@ -328,8 +335,8 @@ Steps:
 1. Consistent error shape `{ error: string }` on all routes; request logging middleware.
 2. `npm run smoke`: script that ingests a fixture HTML file end-to-end against a running
    server and asserts a row exists.
-3. README: setup (Docker, keys incl. where to get the YouTube key, migrate, three dev
-   commands, load the extension), plus a short architecture pointer.
+3. README: setup (Homebrew Postgres per M0, keys incl. where to get the YouTube and Voyage
+   keys, migrate, three dev commands, load the extension), plus a short architecture pointer.
 4. Final pass on `ARCHITECTURE.md`: if implementation diverged anywhere, update the doc
    (do not leave the docs lying).
 
@@ -478,14 +485,20 @@ const finalMessage = await client.beta.messages.toolRunner({
 });
 ```
 
-**Embeddings (OpenAI):**
+**Embeddings (Voyage AI):**
 ```ts
-import OpenAI from "openai";
-const openai = new OpenAI();
-const { data } = await openai.embeddings.create({
-  model: "text-embedding-3-small",      // 1536 dims — matches vector(1536)
-  input: embedString,
-});
-const vector = data[0].embedding;
+import { VoyageAIClient } from "voyageai";
+const voyage = new VoyageAIClient({ apiKey: process.env.VOYAGE_API_KEY });
+
+export async function embedText(text: string, kind: "document" | "query") {
+  const res = await voyage.embed({
+    model: "voyage-4-lite",             // 1024 dims — matches vector(1024)
+    input: [text],
+    inputType: kind,                    // 'document' at ingestion, 'query' at search time
+  });
+  return res.data![0].embedding!;       // number[], length 1024
+}
 // insert as literal: `[${vector.join(",")}]` cast with ::vector
 ```
+The `inputType` asymmetry matters — Voyage optimizes document vs query embeddings; using
+`document` for both loses retrieval quality.
