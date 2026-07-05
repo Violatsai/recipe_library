@@ -1,9 +1,12 @@
 import express from "express";
 import { config } from "./config.js";
 import { query } from "./db.js";
+import { ingestRouter } from "./routes/ingest.js";
 
 const app = express();
 app.use(express.json({ limit: "5mb" }));
+
+app.use("/api", ingestRouter);
 
 app.get("/health", async (_req, res) => {
   let db = false;
