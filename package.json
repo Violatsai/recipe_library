@@ -1,0 +1,19 @@
+{
+  "name": "recipe-library",
+  "private": true,
+  "version": "0.0.0",
+  "description": "Personal recipe-capture + meal-planning tool. See ARCHITECTURE.md and docs/execution-plan.md.",
+  "workspaces": [
+    "server",
+    "extension",
+    "web"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "dev:server": "npm run dev --workspace server",
+    "migrate": "npm run migrate --workspace server",
+    "test": "npm run test --workspace server"
+  }
+}
