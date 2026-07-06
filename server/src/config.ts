@@ -44,3 +44,18 @@ export const config = {
   youtubeApiKey: opt("YOUTUBE_API_KEY"),
   ingestApiKey: opt("INGEST_API_KEY"),
 } as const;
+
+/**
+ * Assert a key is present at the point an operation needs it, with a clear
+ * error. Lets the server boot for /health without every key, while failing
+ * loudly the moment ingestion/agent code actually requires one.
+ */
+export function requireKey(
+  name: "anthropicApiKey" | "voyageApiKey" | "youtubeApiKey" | "ingestApiKey",
+): string {
+  const v = config[name];
+  if (!v) {
+    throw new Error(`Missing required environment variable for this operation: ${name}`);
+  }
+  return v;
+}

@@ -1,6 +1,7 @@
 import { Router } from "express";
 import { z } from "zod";
 import { config } from "../config.js";
+import { NeedsHtmlError } from "../ingest/fetchPage.js";
 import { ingest } from "../ingest/pipeline.js";
 
 export const ingestRouter = Router();
@@ -27,6 +28,11 @@ ingestRouter.post("/ingest", async (req, res) => {
   try {
     res.json(await ingest(parsed.data));
   } catch (err) {
-    res.status(400).json({ error: err instanceof Error ? err.message : "ingest failed" });
+    // Bot-walled / unfetchable → tell the extension to resend page HTML.
+    if (err instanceof NeedsHtmlError) {
+      res.status(422).json({ error: "NEEDS_HTML" });
+      return;
+    }
+    res.status(500).json({ error: err instanceof Error ? err.message : "ingest failed" });
   }
 });
