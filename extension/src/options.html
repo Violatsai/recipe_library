@@ -1,0 +1,43 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>Recipe Library — Settings</title>
+  <style>
+    :root { color-scheme: light dark; }
+    body {
+      max-width: 460px; margin: 48px auto; padding: 0 20px;
+      font: 14px/1.5 system-ui, -apple-system, sans-serif;
+    }
+    h1 { font-size: 18px; margin: 0 0 18px; }
+    label { display: block; font-weight: 600; margin: 14px 0 4px; }
+    input {
+      width: 100%; box-sizing: border-box; padding: 8px 10px;
+      border: 1px solid color-mix(in srgb, currentColor 25%, transparent);
+      border-radius: 6px; font: inherit; background: transparent; color: inherit;
+    }
+    .note { font-size: 12px; color: color-mix(in srgb, currentColor 60%, transparent); margin: 4px 0 0; }
+    button {
+      margin-top: 20px; padding: 9px 22px; font-size: 14px; font-weight: 600;
+      border: none; border-radius: 7px; cursor: pointer; background: #4B6B39; color: #fff;
+    }
+    #status { display: inline-block; margin-left: 12px; font-size: 13px; color: #3C7A2D; }
+  </style>
+</head>
+<body>
+  <h1>Recipe Library — Settings</h1>
+
+  <label for="apiBase">API base URL</label>
+  <input id="apiBase" type="url" placeholder="http://localhost:3001">
+  <p class="note">Where your recipe-library server runs. Non-localhost hosts also require
+     adding the host to <code>host_permissions</code> in manifest.json.</p>
+
+  <label for="apiKey">Ingest API key</label>
+  <input id="apiKey" type="password" placeholder="INGEST_API_KEY from your server's .env">
+  <p class="note">Must match <code>INGEST_API_KEY</code> in the server's <code>.env</code>.</p>
+
+  <button id="save">Save settings</button><span id="status"></span>
+
+  <script src="options.js"></script>
+</body>
+</html>
