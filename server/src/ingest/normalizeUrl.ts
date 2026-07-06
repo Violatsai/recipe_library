@@ -16,6 +16,14 @@ function isYouTubeHost(host: string): boolean {
 }
 
 /** Return the 11-ish char video id for any YouTube video URL form, else null. */
+export function youtubeVideoId(raw: string): string | null {
+  try {
+    return youtubeId(new URL(raw));
+  } catch {
+    return null;
+  }
+}
+
 function youtubeId(u: URL): string | null {
   const host = u.hostname.toLowerCase();
   if (host === "youtu.be") {

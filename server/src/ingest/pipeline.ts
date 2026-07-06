@@ -1,16 +1,26 @@
 import { query, withTransaction } from "../db.js";
 import { embedText, toVectorLiteral } from "./embed.js";
 import { enrich, type ApprovedTags, type EnrichmentData } from "./enrich.js";
-import { fetchPage } from "./fetchPage.js";
+import { fetchPage, NeedsHtmlError } from "./fetchPage.js";
 import { extractRecipeJsonLd } from "./jsonld.js";
-import { detectSource, normalizeUrl } from "./normalizeUrl.js";
+import { detectSource, normalizeUrl, youtubeVideoId } from "./normalizeUrl.js";
 import { extractReadable } from "./readable.js";
+import { findRecipeLink, getTranscript, getVideoMeta } from "./youtube.js";
 
 /**
- * Ingestion orchestrator (M3 = web path): fetch → JSON-LD or readability →
- * enrich (Claude) → embed (Voyage) → transactional upsert. Deduped by
- * normalized source_url: re-saving updates the existing row in place.
- * M4 adds the YouTube branch.
+ * Ingestion orchestrator. Both source types funnel into one shared
+ * enrich → embed → transactional-upsert core; they differ only in how the
+ * enrichment input is assembled:
+ *
+ *   web      — fetch page (or use provided html) → JSON-LD or readability
+ *   youtube  — Data API meta → recipe link in description?
+ *                yes → fetch that page, same treatment as web
+ *                      (fetch failure falls back to the transcript branch,
+ *                       never NEEDS_HTML — the extension only sends a URL
+ *                       for YouTube tabs)
+ *                no  → title + description + best-effort transcript
+ *
+ * Dedup: upsert on normalized source_url; re-saving updates in place.
  */
 
 export interface IngestInput {
@@ -50,26 +60,25 @@ function buildEmbedString(d: EnrichmentData): string {
   return `${d.title}. Ingredients: ${defs}. ${tagParts}`;
 }
 
-export async function ingest(input: IngestInput): Promise<IngestResult> {
-  const normalizedUrl = normalizeUrl(input.url);
-  const source = detectSource(input.url);
-  if (source === "youtube") {
-    throw new Error("YouTube ingestion is implemented in M4");
-  }
-
-  const html = await fetchPage(input.url, input.html); // may throw NeedsHtmlError
+/** Build enrichment input from a recipe web page's HTML. */
+function pageContent(html: string, url: string): string {
   const jsonld = extractRecipeJsonLd(html);
-  const approvedTags = await fetchApprovedTags();
-
-  let userContent: string;
   if (jsonld) {
-    userContent = `Source URL: ${normalizedUrl}\n\nschema.org Recipe JSON:\n${JSON.stringify(jsonld)}`;
-  } else {
-    const r = extractReadable(html, input.url);
-    userContent = `Source URL: ${normalizedUrl}\n\nArticle title: ${r.title}\n\nArticle text:\n${r.textContent}`;
+    return `Source URL: ${url}\n\nschema.org Recipe JSON:\n${JSON.stringify(jsonld)}`;
   }
+  const r = extractReadable(html, url);
+  return `Source URL: ${url}\n\nArticle title: ${r.title}\n\nArticle text:\n${r.textContent}`;
+}
 
-  const data = await enrich({ approvedTags, userContent });
+/** Shared core: enrich → embed → transactional upsert. */
+async function enrichAndPersist(args: {
+  normalizedUrl: string;
+  source: "web" | "youtube";
+  sourceDetail: string | null;
+  userContent: string;
+}): Promise<IngestResult> {
+  const approvedTags = await fetchApprovedTags();
+  const data = await enrich({ approvedTags, userContent: args.userContent });
   const vector = await embedText(buildEmbedString(data), "document");
   const embLiteral = toVectorLiteral(vector);
   const macros = data.macros_per_serving;
@@ -92,13 +101,13 @@ export async function ingest(input: IngestInput): Promise<IngestResult> {
        RETURNING id, (xmax::text = '0') AS inserted`,
       [
         data.title,
-        normalizedUrl,
-        source,
-        null, // source_detail — web recipes have none
+        args.normalizedUrl,
+        args.source,
+        args.sourceDetail,
         data.servings,
         data.total_time_min,
         JSON.stringify(data.steps),
-        userContent, // description = raw captured content, for re-extraction
+        args.userContent, // description = raw captured content, for re-extraction
         macros?.kcal ?? null,
         macros?.protein_g ?? null,
         macros?.carbs_g ?? null,
@@ -150,10 +159,66 @@ export async function ingest(input: IngestInput): Promise<IngestResult> {
 
   return {
     status: inserted ? "saved" : "updated",
-    source,
-    normalizedUrl,
+    source: args.source,
+    normalizedUrl: args.normalizedUrl,
     recipeId,
     title: data.title,
     partial: data.partial,
   };
+}
+
+async function ingestWeb(input: IngestInput, normalizedUrl: string): Promise<IngestResult> {
+  const html = await fetchPage(input.url, input.html); // may throw NeedsHtmlError → 422
+  return enrichAndPersist({
+    normalizedUrl,
+    source: "web",
+    sourceDetail: null,
+    userContent: pageContent(html, normalizedUrl),
+  });
+}
+
+async function ingestYouTube(normalizedUrl: string): Promise<IngestResult> {
+  const videoId = youtubeVideoId(normalizedUrl);
+  if (!videoId) throw new Error(`could not extract a video id from ${normalizedUrl}`);
+  const meta = await getVideoMeta(videoId);
+
+  // Branch 1: recipe link in the description → extract from that page.
+  const link = findRecipeLink(meta.description);
+  if (link) {
+    try {
+      const html = await fetchPage(link);
+      return await enrichAndPersist({
+        normalizedUrl,
+        source: "youtube",
+        sourceDetail: link,
+        userContent: pageContent(html, link),
+      });
+    } catch (err) {
+      if (!(err instanceof NeedsHtmlError)) throw err;
+      // linked page unfetchable server-side → fall through to transcript branch
+    }
+  }
+
+  // Branch 2: title + description + best-effort transcript.
+  const transcript = await getTranscript(videoId);
+  const userContent =
+    `Source: YouTube video ${normalizedUrl}\n` +
+    `Channel: ${meta.channel}\n` +
+    `Video title: ${meta.title}\n\n` +
+    `Video description:\n${meta.description}\n\n` +
+    (transcript
+      ? `Video transcript:\n${transcript}`
+      : `(No transcript available for this video.)`);
+  return enrichAndPersist({
+    normalizedUrl,
+    source: "youtube",
+    sourceDetail: link, // kept even when its fetch failed — still useful provenance
+    userContent,
+  });
+}
+
+export async function ingest(input: IngestInput): Promise<IngestResult> {
+  const normalizedUrl = normalizeUrl(input.url);
+  const source = detectSource(input.url);
+  return source === "youtube" ? ingestYouTube(normalizedUrl) : ingestWeb(input, normalizedUrl);
 }
