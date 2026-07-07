@@ -235,9 +235,12 @@ Steps in `youtube.ts`:
 2. `findRecipeLink(description)`: first http(s) URL that is not youtube/instagram/tiktok/
    facebook/twitter/linktr.ee/patreon/amzn — return null if none.
 3. `getTranscript(videoId)`: `youtube-transcript`, try/catch → joined text or null. Never throw.
-4. Pipeline branch: link found → run the **M3 web path** on that URL (`source_detail` = the
-   linked URL; `source_url` stays the canonical YouTube URL); if the linked page fetch fails,
-   fall back to branch 5 instead of erroring.
+4. Pipeline branch: link found → fetch that URL, but trust it **only if it carries Recipe
+   JSON-LD** (refined post-M4 from live data: descriptions are full of sponsor/dead links
+   that a host blocklist can't fully catch — a 200 without Recipe JSON-LD must not be the
+   extraction source). On pass: `source_detail` = the linked URL; `source_url` stays the
+   canonical YouTube URL. On reject/fetch-failure: fall through to branch 5, with
+   `source_detail` left null (it means "the page we extracted from", nothing weaker).
 5. No link (or fallback): enrichment input = title + description + transcript-if-available.
    If transcript is null, proceed anyway; the model sets `partial` as appropriate.
 

@@ -60,12 +60,14 @@ function buildEmbedString(d: EnrichmentData): string {
   return `${d.title}. Ingredients: ${defs}. ${tagParts}`;
 }
 
+function jsonldContent(jsonld: Record<string, unknown>, url: string): string {
+  return `Source URL: ${url}\n\nschema.org Recipe JSON:\n${JSON.stringify(jsonld)}`;
+}
+
 /** Build enrichment input from a recipe web page's HTML. */
 function pageContent(html: string, url: string): string {
   const jsonld = extractRecipeJsonLd(html);
-  if (jsonld) {
-    return `Source URL: ${url}\n\nschema.org Recipe JSON:\n${JSON.stringify(jsonld)}`;
-  }
+  if (jsonld) return jsonldContent(jsonld, url);
   const r = extractReadable(html, url);
   return `Source URL: ${url}\n\nArticle title: ${r.title}\n\nArticle text:\n${r.textContent}`;
 }
@@ -182,20 +184,30 @@ async function ingestYouTube(normalizedUrl: string): Promise<IngestResult> {
   if (!videoId) throw new Error(`could not extract a video id from ${normalizedUrl}`);
   const meta = await getVideoMeta(videoId);
 
-  // Branch 1: recipe link in the description → extract from that page.
+  // Branch 1: recipe link in the description → extract from that page, but
+  // ONLY if it carries Recipe JSON-LD. Descriptions are full of sponsor/merch
+  // links a heuristic can't reliably reject; a page that 200s without Recipe
+  // JSON-LD (e.g. a sponsor homepage) must not be trusted as the recipe
+  // source, while real recipe pages nearly always embed it. Rejected or
+  // unfetchable links fall through to the transcript branch, which is always
+  // about the correct video.
   const link = findRecipeLink(meta.description);
   if (link) {
     try {
       const html = await fetchPage(link);
-      return await enrichAndPersist({
-        normalizedUrl,
-        source: "youtube",
-        sourceDetail: link,
-        userContent: pageContent(html, link),
-      });
+      const jsonld = extractRecipeJsonLd(html);
+      if (jsonld) {
+        return await enrichAndPersist({
+          normalizedUrl,
+          source: "youtube",
+          sourceDetail: link,
+          userContent: jsonldContent(jsonld, link),
+        });
+      }
+      // no Recipe JSON-LD → unverified page → transcript branch
     } catch (err) {
       if (!(err instanceof NeedsHtmlError)) throw err;
-      // linked page unfetchable server-side → fall through to transcript branch
+      // linked page unfetchable server-side → transcript branch
     }
   }
 
@@ -212,7 +224,9 @@ async function ingestYouTube(normalizedUrl: string): Promise<IngestResult> {
   return enrichAndPersist({
     normalizedUrl,
     source: "youtube",
-    sourceDetail: link, // kept even when its fetch failed — still useful provenance
+    // source_detail means "the page we actually extracted from" — a rejected
+    // or unfetchable link is not that, so the transcript branch stores none.
+    sourceDetail: null,
     userContent,
   });
 }
