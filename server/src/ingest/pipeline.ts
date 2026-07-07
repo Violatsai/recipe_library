@@ -72,15 +72,18 @@ function pageContent(html: string, url: string): string {
   return `Source URL: ${url}\n\nArticle title: ${r.title}\n\nArticle text:\n${r.textContent}`;
 }
 
-/** Shared core: enrich → embed → transactional upsert. */
+/** Shared core: enrich → embed → transactional upsert.
+ *  `resolveSourceDetail` runs after enrichment so callers can set provenance
+ *  from the result (e.g. which source Claude actually used). */
 async function enrichAndPersist(args: {
   normalizedUrl: string;
   source: "web" | "youtube";
-  sourceDetail: string | null;
+  resolveSourceDetail: (data: EnrichmentData) => string | null;
   userContent: string;
 }): Promise<IngestResult> {
   const approvedTags = await fetchApprovedTags();
   const data = await enrich({ approvedTags, userContent: args.userContent });
+  const sourceDetail = args.resolveSourceDetail(data);
   const vector = await embedText(buildEmbedString(data), "document");
   const embLiteral = toVectorLiteral(vector);
   const macros = data.macros_per_serving;
@@ -105,7 +108,7 @@ async function enrichAndPersist(args: {
         data.title,
         args.normalizedUrl,
         args.source,
-        args.sourceDetail,
+        sourceDetail,
         data.servings,
         data.total_time_min,
         JSON.stringify(data.steps),
@@ -174,7 +177,7 @@ async function ingestWeb(input: IngestInput, normalizedUrl: string): Promise<Ing
   return enrichAndPersist({
     normalizedUrl,
     source: "web",
-    sourceDetail: null,
+    resolveSourceDetail: () => null,
     userContent: pageContent(html, normalizedUrl),
   });
 }
@@ -183,15 +186,13 @@ async function ingestYouTube(normalizedUrl: string): Promise<IngestResult> {
   const videoId = youtubeVideoId(normalizedUrl);
   if (!videoId) throw new Error(`could not extract a video id from ${normalizedUrl}`);
   const meta = await getVideoMeta(videoId);
-
-  // Branch 1: recipe link in the description → extract from that page, but
-  // ONLY if it carries Recipe JSON-LD. Descriptions are full of sponsor/merch
-  // links a heuristic can't reliably reject; a page that 200s without Recipe
-  // JSON-LD (e.g. a sponsor homepage) must not be trusted as the recipe
-  // source, while real recipe pages nearly always embed it. Rejected or
-  // unfetchable links fall through to the transcript branch, which is always
-  // about the correct video.
   const link = findRecipeLink(meta.description);
+
+  // Try the linked page. Recipe JSON-LD → trust it directly (high confidence).
+  // No markup → keep its readable text and let Claude decide below whether it's
+  // the real recipe or an unrelated sponsor/shop page. (A binary JSON-LD gate
+  // over-rejected legit recipe pages that simply lack schema markup.)
+  let linkedPage: { url: string; text: string } | null = null;
   if (link) {
     try {
       const html = await fetchPage(link);
@@ -200,34 +201,51 @@ async function ingestYouTube(normalizedUrl: string): Promise<IngestResult> {
         return await enrichAndPersist({
           normalizedUrl,
           source: "youtube",
-          sourceDetail: link,
+          resolveSourceDetail: () => link,
           userContent: jsonldContent(jsonld, link),
         });
       }
-      // no Recipe JSON-LD → unverified page → transcript branch
+      const r = extractReadable(html, link);
+      const text = `${r.title}\n\n${r.textContent}`.trim();
+      if (text.length > 0) linkedPage = { url: link, text };
     } catch (err) {
       if (!(err instanceof NeedsHtmlError)) throw err;
-      // linked page unfetchable server-side → transcript branch
+      // unfetchable → treat as no linked page
     }
   }
 
-  // Branch 2: title + description + best-effort transcript.
   const transcript = await getTranscript(videoId);
-  const userContent =
-    `Source: YouTube video ${normalizedUrl}\n` +
+  const videoBlock =
     `Channel: ${meta.channel}\n` +
     `Video title: ${meta.title}\n\n` +
     `Video description:\n${meta.description}\n\n` +
-    (transcript
-      ? `Video transcript:\n${transcript}`
-      : `(No transcript available for this video.)`);
+    (transcript ? `Video transcript:\n${transcript}` : `(No transcript available for this video.)`);
+
+  // Both sources available → let Claude pick the authoritative one.
+  if (linkedPage) {
+    const page = linkedPage;
+    const userContent =
+      `Source: YouTube video ${normalizedUrl}\n\n` +
+      `A recipe page was linked in the video description. Use it as the recipe source ONLY IF ` +
+      `it is the recipe for THIS video's dish. If the linked page is an unrelated sponsor, shop, ` +
+      `or generic page, IGNORE it and extract from the video content instead. Set source_used ` +
+      `to "linked_page" or "video" accordingly.\n\n` +
+      `=== LINKED PAGE (${page.url}) ===\n${page.text}\n\n` +
+      `=== VIDEO ===\n${videoBlock}`;
+    return enrichAndPersist({
+      normalizedUrl,
+      source: "youtube",
+      resolveSourceDetail: (d) => (d.source_used === "linked_page" ? page.url : null),
+      userContent,
+    });
+  }
+
+  // Video-only: title + description + best-effort transcript.
   return enrichAndPersist({
     normalizedUrl,
     source: "youtube",
-    // source_detail means "the page we actually extracted from" — a rejected
-    // or unfetchable link is not that, so the transcript branch stores none.
-    sourceDetail: null,
-    userContent,
+    resolveSourceDetail: () => null,
+    userContent: `Source: YouTube video ${normalizedUrl}\n${videoBlock}`,
   });
 }
 

@@ -36,11 +36,15 @@ schema.org/Recipe JSON-LD present?  ──yes──▶  parse → clean structur
                                               (vision fallback for JS-heavy / image recipes)
 
 # YouTube
-recipe URL in description?  ──yes──▶  fetch the linked page — trusted ONLY if it carries
-                                      Recipe JSON-LD (sponsor/dead links fall through
-                                      to the transcript branch below)
-                            ──no───▶  transcript + description to the LLM pass
-                                      (primary path for Shorts; transcript is best-effort)
+recipe link in description?
+   yes → fetch it · has Recipe JSON-LD → extract from the page (high confidence)
+                  · no markup          → hand Claude BOTH the page text + the video
+                                         (title/desc/transcript); it uses the page if it's
+                                         the right dish, else the video — a sponsor/shop page
+                                         is ignored (source_used records the choice)
+                  · unfetchable        → fall through ↓
+   no  → transcript + description to the LLM pass
+         (primary path for Shorts; transcript is best-effort)
 
 # Either way: EVERY recipe gets exactly one LLM enrichment pass
 # (extraction where needed, tags, macros, defining ingredients) + one embedding call.

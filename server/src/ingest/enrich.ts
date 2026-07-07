@@ -48,6 +48,10 @@ export const Enrichment = z.object({
     })
     .nullable(),
   partial: z.boolean(),
+  // Only meaningful when the input offers BOTH a linked page and video content
+  // (YouTube). Records which one the recipe was extracted from, for provenance.
+  // null in every other case.
+  source_used: z.enum(["linked_page", "video"]).nullable(),
 });
 
 export type EnrichmentData = z.infer<typeof Enrichment>;
@@ -75,6 +79,7 @@ Rules:
 - new_tags: ONLY when no approved value fits a classification the recipe genuinely needs. Propose a concise value in the correct category. Never duplicate an approved value here.
 - macros_per_serving: a BALLPARK per-serving estimate (kcal, protein_g, carbs_g, fat_g), reasoned from the ingredients and servings. Approximate is expected. Use null only when there is not enough information at all.
 - partial: true when the source was too thin to extract a confident recipe (missing ingredients or steps).
+- source_used: ONLY when the input below contains both a "LINKED PAGE" section and a "VIDEO" section, set this to "linked_page" if you extracted the recipe from the linked page, or "video" if the linked page was unrelated (a sponsor/shop/generic page) and you used the video's description/transcript instead. In every other case set it to null.
 
 APPROVED VOCABULARY
 cuisine: ${vocab.cuisine.join(", ")}
