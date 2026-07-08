@@ -2,6 +2,7 @@ import { betaZodTool } from "@anthropic-ai/sdk/helpers/beta/zod";
 import type { BetaRunnableTool } from "@anthropic-ai/sdk/lib/tools/BetaRunnableTool";
 import { z } from "zod/v4";
 import { query, withTransaction } from "../db.js";
+import { fetchRecipeDetail } from "../recipeQueries.js";
 import { hybridSearch, type SearchInput } from "./search.js";
 
 export interface ToolEvent {
@@ -77,58 +78,7 @@ export function buildTools(events: ToolEvent[]): BetaRunnableTool<unknown>[] {
     "Fetch full details for one recipe by id: ingredients, steps, macros, tags, source URL. " +
       "Call this when the user wants to actually cook a recipe or see its details.",
     z.object({ id: z.string() }),
-    async ({ id }) => {
-      const r = (
-        await query<{
-          id: string;
-          title: string;
-          servings: number | null;
-          total_time_min: number | null;
-          steps: unknown;
-          kcal: number | null;
-          protein_g: number | null;
-          carbs_g: number | null;
-          fat_g: number | null;
-          macros_estimated: boolean;
-          source_url: string;
-          source_detail: string | null;
-        }>(
-          `SELECT id, title, servings, total_time_min, steps, kcal, protein_g, carbs_g, fat_g,
-                  macros_estimated, source_url, source_detail
-             FROM recipes WHERE id = $1`,
-          [id],
-        )
-      ).rows[0];
-      if (!r) return { error: "recipe not found" };
-
-      const ingredients = (
-        await query<{ name: string; quantity: number | null; unit: string | null; raw_text: string }>(
-          "SELECT name, quantity, unit, raw_text FROM ingredients WHERE recipe_id = $1",
-          [id],
-        )
-      ).rows;
-      const tags = (
-        await query<{ category: string; value: string }>(
-          "SELECT t.category, t.value FROM recipe_tags rt JOIN tags t ON t.id = rt.tag_id WHERE rt.recipe_id = $1",
-          [id],
-        )
-      ).rows;
-
-      return {
-        id: r.id,
-        title: r.title,
-        servings: r.servings,
-        total_time_min: r.total_time_min,
-        steps: r.steps,
-        ingredients,
-        tags,
-        macros_per_serving:
-          r.kcal == null ? null : { kcal: r.kcal, protein_g: r.protein_g, carbs_g: r.carbs_g, fat_g: r.fat_g },
-        macros_estimated: r.macros_estimated,
-        source_url: r.source_url,
-        source_detail: r.source_detail,
-      };
-    },
+    async ({ id }) => (await fetchRecipeDetail(id)) ?? { error: "recipe not found" },
   );
 
   const createMealPlan = record(
