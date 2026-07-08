@@ -395,7 +395,9 @@ raw_text    <span class="kw">text</span>       <span class="cm">-- original line
   dietary:     [<span class="kw">str</span>],     <span class="cm">// SQL pre-filter — never semantic; best-effort coverage</span>
   max_time_min:<span class="kw">int</span>,
   limit:       <span class="kw">int</span>
-) → [{ id, title, cuisine, dish_type, macros }]
+) → { results: [{ id, title, cuisine, dish_type, macros }],
+      semantic_ranking: <span class="kw">bool</span>,   <span class="cm">// false = embedding unavailable; filters still applied,</span>
+      note? }                   <span class="cm">//        ordering degraded to recency</span>
 
 get_recipe(id) → { full steps, ingredients, macros, tags, source_url }</pre>
     </div>
@@ -456,6 +458,7 @@ save_grocery_list(meal_plan_id, items[]) → grocery_list_id</pre>
       <div class="row"><span class="pin">!</span><span class="x"><b>YouTube transcripts are the flakiest dependency.</b> The official Data API doesn't expose captions for videos you don't own; unofficial scrapers break periodically. Description-first always; transcript best-effort with graceful partial saves.</span></div>
       <div class="row"><span class="pin">!</span><span class="x"><b><code>web_fetch</code> will bounce off bot-blocked recipe sites.</b> Fallback: the extension <em>is</em> a browser — it fetches client-side and ships raw HTML up. The ingestion API accepts both "here's a URL" and "here's raw HTML" from day one.</span></div>
       <div class="row"><span class="pin">!</span><span class="x"><b>Hosted ingestion API needs a key.</b> If not localhost, at least a static API key even single-user — otherwise anyone with the URL can write to the library.</span></div>
+      <div class="row"><span class="pin">!</span><span class="x"><b>Voyage free tier w/o payment method = 3 req/min.</b> Mitigated: <code>embedText</code> retries on 429; search degrades to filters + recency (<code>semantic_ranking: false</code>) instead of failing. A card on the Voyage account lifts the cap; free tokens still apply.</span></div>
     </div>
   </section>
 

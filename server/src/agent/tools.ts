@@ -56,7 +56,9 @@ export function buildTools(events: ToolEvent[]): BetaRunnableTool<unknown>[] {
     "search_recipes",
     "Search the user's recipe library. Call this whenever the user asks what to cook, " +
       "mentions ingredients they have, or asks for meal ideas. Free-text `query` drives " +
-      "semantic ranking; the other fields are hard filters. Returns matching recipes.",
+      "semantic ranking; the other fields are hard filters. Returns { results, " +
+      "semantic_ranking, note? } — when semantic_ranking is false the filters still " +
+      "applied but ordering fell back to recency; briefly mention that to the user.",
     searchInput,
     async (input) => {
       const normalized: SearchInput = {

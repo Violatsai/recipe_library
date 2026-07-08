@@ -3,13 +3,16 @@
 Personal recipe-capture + meal-planning tool. Chrome extension saves recipes from web pages
 and YouTube; a Claude-powered agent searches the library and plans meals over chat.
 
+**Status: all milestones (M0–M8) complete.** The execution plan is historical record;
+work from here is normal feature/fix development.
+
 ## Read before working
 
 1. **`ARCHITECTURE.md`** — the design. All decisions are settled there (see "Settled
-   decisions" table). Do not redesign.
-2. **`docs/execution-plan.md`** — the build script. Work **one milestone at a time, in
-   order**; each ends with its verification checks, a single commit (message given in the
-   plan), and a push.
+   decisions" table). Do not redesign without discussing with the user.
+2. **`docs/execution-plan.md`** — the build script the MVP was built from (M0–M8, done).
+   Useful as a map of what exists and why; deviations are recorded inline.
+3. **`README.md`** — setup + commands.
 
 ## Hard rules
 
@@ -26,5 +29,6 @@ and YouTube; a Claude-powered agent searches the library and plans meals over ch
 
 - `brew services start postgresql@18` — Postgres (pgvector installed via brew; no Docker in this project)
 - `npm run migrate` — apply `server/db/migrations/*.sql` in order
+- `npm run smoke` — end-to-end fixture ingest against a running server (self-cleaning)
 - `npm run dev:server` / `npm run dev:web` — dev servers
 - `npm test` — vitest

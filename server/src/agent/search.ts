@@ -29,6 +29,13 @@ export interface SearchResult {
   macros: { kcal: number; protein_g: number; carbs_g: number; fat_g: number; estimated: true } | null;
 }
 
+export interface SearchOutput {
+  results: SearchResult[];
+  /** false when the embedding service was unavailable — filters still applied, ordering by recency */
+  semantic_ranking: boolean;
+  note?: string;
+}
+
 interface RecipeRow {
   id: string;
   title: string;
@@ -39,7 +46,7 @@ interface RecipeRow {
   fat_g: number | null;
 }
 
-export async function hybridSearch(input: SearchInput): Promise<SearchResult[]> {
+export async function hybridSearch(input: SearchInput): Promise<SearchOutput> {
   const params: unknown[] = [];
   const bind = (v: unknown): string => {
     params.push(v);
@@ -82,10 +89,22 @@ export async function hybridSearch(input: SearchInput): Promise<SearchResult[]> 
     clauses.push(`(r.total_time_min IS NOT NULL AND r.total_time_min <= ${bind(input.max_time_min)})`);
   }
 
+  // Semantic ranking is best-effort: if the embedding service is down or
+  // rate-limited (after embedText's own retries), degrade to the structured
+  // filters ordered by recency rather than failing the whole search.
   let orderBy = "r.created_at DESC";
+  let semanticRanking = false;
+  let note: string | undefined;
   if (input.query.trim().length > 0) {
-    const vec = await embedText(input.query, "query");
-    orderBy = `r.embedding <=> ${bind(toVectorLiteral(vec))}::vector NULLS LAST, r.created_at DESC`;
+    try {
+      const vec = await embedText(input.query, "query");
+      orderBy = `r.embedding <=> ${bind(toVectorLiteral(vec))}::vector NULLS LAST, r.created_at DESC`;
+      semanticRanking = true;
+    } catch (err) {
+      note =
+        "semantic ranking unavailable (embedding service error) — filters were applied, results are ordered by recency";
+      console.warn(`hybridSearch: degraded to recency ordering: ${err instanceof Error ? err.message : err}`);
+    }
   }
 
   const where = clauses.length > 0 ? `WHERE ${clauses.join(" AND ")}` : "";
@@ -95,7 +114,7 @@ export async function hybridSearch(input: SearchInput): Promise<SearchResult[]> 
                LIMIT ${bind(input.limit)}`;
 
   const rows = (await query<RecipeRow>(sql, params)).rows;
-  if (rows.length === 0) return [];
+  if (rows.length === 0) return { results: [], semantic_ranking: semanticRanking, ...(note && { note }) };
 
   // Attach cuisine/dish_type tags for the result set in one query.
   const ids = rows.map((r) => r.id);
@@ -117,7 +136,7 @@ export async function hybridSearch(input: SearchInput): Promise<SearchResult[]> 
     }
   }
 
-  return rows.map((r) => ({
+  const results = rows.map((r) => ({
     id: r.id,
     title: r.title,
     cuisine: tagMap.get(r.id)?.cuisine ?? [],
@@ -134,4 +153,5 @@ export async function hybridSearch(input: SearchInput): Promise<SearchResult[]> 
             estimated: true as const,
           },
   }));
+  return { results, semantic_ranking: semanticRanking, ...(note && { note }) };
 }

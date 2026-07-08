@@ -1,10 +1,11 @@
 import { Router } from "express";
+import { asyncHandler } from "../http.js";
 import { z } from "zod";
 import { query, withTransaction } from "../db.js";
 
 export const tagsRouter = Router();
 
-tagsRouter.get("/tags", async (_req, res) => {
+tagsRouter.get("/tags", asyncHandler(async (_req, res) => {
   const rows = (
     await query<{ id: string; category: string; value: string; status: string; usage_count: string }>(
       `SELECT t.id, t.category, t.value, t.status, count(rt.recipe_id) AS usage_count
@@ -13,11 +14,11 @@ tagsRouter.get("/tags", async (_req, res) => {
     )
   ).rows;
   res.json(rows.map((r) => ({ ...r, usage_count: Number(r.usage_count) })));
-});
+}));
 
 const Rename = z.object({ value: z.string().min(1) });
 
-tagsRouter.patch("/tags/:id", async (req, res) => {
+tagsRouter.patch("/tags/:id", asyncHandler(async (req, res) => {
   const parsed = Rename.safeParse(req.body);
   if (!parsed.success) {
     res.status(400).json({ error: "value (non-empty string) required" });
@@ -41,21 +42,21 @@ tagsRouter.patch("/tags/:id", async (req, res) => {
     }
     throw err;
   }
-});
+}));
 
-tagsRouter.delete("/tags/:id", async (req, res) => {
+tagsRouter.delete("/tags/:id", asyncHandler(async (req, res) => {
   const r = await query("DELETE FROM tags WHERE id = $1", [req.params.id]);
   if (r.rowCount === 0) {
     res.status(404).json({ error: "tag not found" });
     return;
   }
   res.json({ ok: true });
-});
+}));
 
 const Merge = z.object({ into_tag_id: z.string().min(1) });
 
 /** Merge tag :id into another tag of the same category: repoint recipe_tags, delete source. */
-tagsRouter.post("/tags/:id/merge", async (req, res) => {
+tagsRouter.post("/tags/:id/merge", asyncHandler(async (req, res) => {
   const parsed = Merge.safeParse(req.body);
   if (!parsed.success) {
     res.status(400).json({ error: "into_tag_id required" });
@@ -101,4 +102,4 @@ tagsRouter.post("/tags/:id/merge", async (req, res) => {
     }
     throw err;
   }
-});
+}));

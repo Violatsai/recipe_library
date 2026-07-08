@@ -13,7 +13,8 @@ function EventCards({ events }: { events: ToolEvent[] }) {
   const cards: React.ReactNode[] = [];
   events.forEach((e, idx) => {
     if (e.tool === "search_recipes") {
-      cards.push(<RecipeCards key={idx} results={e.output as SearchResult[]} />);
+      const out = e.output as { results?: SearchResult[] };
+      cards.push(<RecipeCards key={idx} results={out.results ?? []} />);
     } else if (e.tool === "get_recipe") {
       const out = e.output as RecipeDetail | { error: string };
       if (!("error" in out)) cards.push(<RecipeDetailView key={idx} detail={out} />);

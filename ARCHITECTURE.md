@@ -158,7 +158,9 @@ search_recipes(                  // hybrid: vector + SQL
   dietary:     [str],    // SQL pre-filter — never semantic; best-effort coverage
   max_time_min:int,
   limit:       int
-) → [{ id, title, cuisine, dish_type, macros }]
+) → { results: [{ id, title, cuisine, dish_type, macros }],
+      semantic_ranking: bool,   // false = embedding unavailable; filters still applied,
+      note? }                   //        ordering degraded to recency
 
 get_recipe(id) → { full steps, ingredients, macros, tags, source_url }
 ```
@@ -210,6 +212,7 @@ A single web app and a single chat surface is the entry point for both retrieval
 - **YouTube transcripts are the flakiest dependency.** The official Data API doesn't expose captions for videos you don't own; unofficial transcript scrapers break periodically. Description-first always; transcript best-effort with graceful partial saves ("saved with partial info — open the video to complete").
 - **`web_fetch` will bounce off bot-blocked recipe sites** (Cloudflare et al.). Fallback: the extension *is* a browser — it fetches the URL client-side and ships raw HTML up. Design the ingestion API to accept both "here's a URL" and "here's raw HTML" from day one.
 - **If the ingestion API is hosted publicly** (not localhost), it needs at least a static API key even single-user — otherwise anyone with the URL can write to the library.
+- **Voyage free tier without a payment method = 3 requests/min** — one enthusiastic chat turn can exceed it. Mitigated in code: `embedText` retries on 429 with backoff, and search degrades to filters + recency ordering (flagged via `semantic_ranking: false`) instead of failing. Adding a card to the Voyage account lifts the cap; the 200M free tokens still apply.
 
 ---
 

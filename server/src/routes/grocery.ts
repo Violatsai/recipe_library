@@ -1,11 +1,12 @@
 import { Router } from "express";
+import { asyncHandler } from "../http.js";
 import { z } from "zod";
 import { query } from "../db.js";
 
 export const groceryRouter = Router();
 
 /** Items of one saved grocery list (with ids, so the UI can toggle checkboxes). */
-groceryRouter.get("/grocery-lists/:id", async (req, res) => {
+groceryRouter.get("/grocery-lists/:id", asyncHandler(async (req, res) => {
   const items = (
     await query<{ id: string; name: string; quantity: number | null; unit: string | null; checked: boolean }>(
       "SELECT id, name, quantity, unit, checked FROM grocery_items WHERE grocery_list_id = $1 ORDER BY name",
@@ -13,11 +14,11 @@ groceryRouter.get("/grocery-lists/:id", async (req, res) => {
     )
   ).rows;
   res.json({ id: req.params.id, items });
-});
+}));
 
 const Toggle = z.object({ checked: z.boolean() });
 
-groceryRouter.patch("/grocery-items/:id", async (req, res) => {
+groceryRouter.patch("/grocery-items/:id", asyncHandler(async (req, res) => {
   const parsed = Toggle.safeParse(req.body);
   if (!parsed.success) {
     res.status(400).json({ error: "checked (boolean) required" });
@@ -32,10 +33,10 @@ groceryRouter.patch("/grocery-items/:id", async (req, res) => {
     return;
   }
   res.json({ ok: true });
-});
+}));
 
 /** One meal plan with its recipes (for rendering the plan card in chat). */
-groceryRouter.get("/meal-plans/:id", async (req, res) => {
+groceryRouter.get("/meal-plans/:id", asyncHandler(async (req, res) => {
   const plan = (
     await query<{ id: string; title: string; start_date: string | null }>(
       "SELECT id, title, start_date FROM meal_plans WHERE id = $1",
@@ -56,4 +57,4 @@ groceryRouter.get("/meal-plans/:id", async (req, res) => {
     )
   ).rows;
   res.json({ ...plan, entries });
-});
+}));
