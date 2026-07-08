@@ -1,12 +1,14 @@
 import express from "express";
 import { config } from "./config.js";
 import { query } from "./db.js";
+import { chatRouter } from "./routes/chat.js";
 import { ingestRouter } from "./routes/ingest.js";
 
 const app = express();
 app.use(express.json({ limit: "5mb" }));
 
 app.use("/api", ingestRouter);
+app.use("/api", chatRouter);
 
 app.get("/health", async (_req, res) => {
   let db = false;

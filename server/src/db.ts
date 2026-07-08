@@ -1,6 +1,11 @@
 import pg from "pg";
 import { config } from "./config.js";
 
+// Parse Postgres numeric (OID 1700) as JS float rather than string, so macros
+// and ingredient quantities arrive as numbers throughout the app. Recipe-scale
+// values don't need arbitrary precision.
+pg.types.setTypeParser(1700, (v: string | null) => (v === null ? null : Number.parseFloat(v)));
+
 /**
  * Single shared connection pool. Import `query` for one-shot statements and
  * `withTransaction` for multi-statement atomic work (e.g. the ingestion upsert).
