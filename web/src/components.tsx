@@ -156,27 +156,39 @@ export function GroceryListCard({ listId }: { listId: string }) {
     });
   };
 
+  // group by store section (agent-assigned); legacy rows without one → "other"
+  const sections = new Map<string, GroceryItem[]>();
+  for (const i of items) {
+    const cat = i.category ?? "other";
+    sections.set(cat, [...(sections.get(cat) ?? []), i]);
+  }
+
   return (
     <div className="card">
       <h3>🛒 Grocery list</h3>
-      <ul className="grocery">
-        {items.map((i) => (
-          <li key={i.id}>
-            <input
-              type="checkbox"
-              checked={i.checked}
-              onChange={() => toggle(i)}
-              id={`gi-${i.id}`}
-            />
-            <label htmlFor={`gi-${i.id}`} className={i.checked ? "done" : ""}>
-              {i.name}
-            </label>
-            <span className="qty">
-              {i.quantity != null ? i.quantity : ""} {i.unit ?? ""}
-            </span>
-          </li>
-        ))}
-      </ul>
+      {[...sections.entries()].map(([cat, group]) => (
+        <div key={cat}>
+          <div className="grocery-section">{cat}</div>
+          <ul className="grocery">
+            {group.map((i) => (
+              <li key={i.id}>
+                <input
+                  type="checkbox"
+                  checked={i.checked}
+                  onChange={() => toggle(i)}
+                  id={`gi-${i.id}`}
+                />
+                <label htmlFor={`gi-${i.id}`} className={i.checked ? "done" : ""}>
+                  {i.name}
+                </label>
+                <span className="qty">
+                  {i.quantity != null ? i.quantity : ""} {i.unit ?? ""}
+                </span>
+              </li>
+            ))}
+          </ul>
+        </div>
+      ))}
     </div>
   );
 }

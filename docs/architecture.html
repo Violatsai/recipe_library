@@ -367,7 +367,9 @@ raw_text    <span class="kw">text</span>       <span class="cm">-- original line
 <pre><span class="kw">grocery_lists</span>    id, meal_plan_id fk, created_at
 
 <span class="kw">grocery_items</span>    id, grocery_list_id fk, name, quantity, unit,
-                 checked  <span class="cm">-- tick off while shopping</span>
+                 checked,   <span class="cm">-- tick off while shopping</span>
+                 category   <span class="cm">-- store section (produce, meat & seafood, …),
+                            -- agent-assigned at consolidation; UI groups by it</span>
 
 <span class="kw">pantry_staples</span>   id, name   <span class="cm">-- user-managed; subtracted from generated lists</span></pre>
     </div>

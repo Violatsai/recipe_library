@@ -133,7 +133,9 @@ meal_plan_recipes   id, meal_plan_id fk, recipe_id fk,
 grocery_lists       id, meal_plan_id fk, created_at
 
 grocery_items       id, grocery_list_id fk, name, quantity, unit,
-                    checked  -- tick off while shopping
+                    checked,   -- tick off while shopping
+                    category   -- store section (produce, meat & seafood, …),
+                               -- assigned by the agent at consolidation; UI groups by it
 
 pantry_staples      id, name   -- user-managed; subtracted from generated lists
 ```

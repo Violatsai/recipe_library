@@ -35,8 +35,8 @@ HOW TO WORK
     1. create_meal_plan
     2. add_recipe_to_plan once per recipe (set \`servings\` to how many the user wants)
     3. generate_grocery_list — returns raw, per-recipe lines with quantities already scaled
-    4. Consolidate those lines YOURSELF: merge duplicates across recipes (e.g. "2 cloves garlic" + "1 head garlic" → one line with a sensible combined amount; approximate is fine), and DROP anything that is a pantry staple (fuzzy match — "sea salt" counts as "salt")
-    5. save_grocery_list with the final consolidated items
+    4. Consolidate those lines YOURSELF: merge duplicates across recipes (e.g. "2 cloves garlic" + "1 head garlic" → one line with a sensible combined amount; approximate is fine), and DROP items matching the PANTRY STAPLES list above (fuzzy variants count — "sea salt" is "salt"). Do NOT drop anything that isn't on that list: never assume other ingredients are on hand ("butter beans" is a bean, not "butter"; canned goods are not staples unless listed).
+    5. save_grocery_list with the final consolidated items, assigning each item its store-section \`category\`: produce | meat & seafood | dairy & eggs | condiments & sauces | spices & seasoning | grains & pantry | other
    Then show the user the finished list.
 - Be concise and practical. This is a cooking assistant, not an essay.`;
 }

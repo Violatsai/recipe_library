@@ -152,6 +152,12 @@ table.plan td { padding: 6px 10px 6px 0; border-top: 1px solid var(--line-soft);
 td.num, .num { font-variant-numeric: tabular-nums; }
 
 /* grocery checklist */
+.grocery-section {
+  font-size: 11.5px; font-weight: 700; letter-spacing: .06em;
+  text-transform: uppercase; color: var(--accent);
+  margin: 12px 0 2px;
+}
+.grocery-section:first-of-type { margin-top: 4px; }
 .grocery li {
   list-style: none; display: flex; align-items: center; gap: 10px;
   padding: 5px 0; border-top: 1px solid var(--line-soft);
@@ -163,6 +169,26 @@ td.num, .num { font-variant-numeric: tabular-nums; }
 .grocery .qty { margin-left: auto; color: var(--muted); font-size: 13px; font-variant-numeric: tabular-nums; }
 
 /* ---- library ---- */
+.lib-toolbar { margin-bottom: 18px; display: flex; flex-direction: column; gap: 10px; }
+.lib-search {
+  width: 100%; max-width: 380px; box-sizing: border-box;
+  border: 1px solid var(--line); border-radius: 10px; background: var(--raise);
+  padding: 9px 12px;
+}
+.filter-row { display: flex; flex-wrap: wrap; gap: 6px; }
+.filter-chip {
+  border: 1px solid var(--line); background: var(--panel); color: var(--muted);
+  border-radius: 999px; padding: 3px 12px; font-size: 12.5px; font-weight: 600;
+}
+.filter-chip:hover { border-color: var(--accent); color: var(--accent); }
+.filter-chip.on { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); }
+.filter-chip.clear { border-style: dashed; }
+.detail-toolbar { display: flex; justify-content: space-between; align-items: baseline; }
+.danger-btn {
+  border: 1px solid var(--line); background: var(--panel); color: #B03A2E;
+  border-radius: 8px; padding: 5px 14px; font-size: 13px; font-weight: 600;
+}
+.danger-btn:hover { border-color: #B03A2E; background: var(--flag-soft); }
 .lib-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(250px, 1fr)); gap: 12px; }
 .lib-card { text-align: left; border: 1px solid var(--line); background: var(--panel); border-radius: var(--radius); padding: 14px 16px; box-shadow: var(--shadow); }
 .lib-card:hover { border-color: var(--accent); }

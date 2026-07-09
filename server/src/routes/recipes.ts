@@ -1,4 +1,5 @@
 import { Router } from "express";
+import { query } from "../db.js";
 import { asyncHandler } from "../http.js";
 import { fetchRecipeDetail, listRecipes } from "../recipeQueries.js";
 
@@ -15,4 +16,14 @@ recipesRouter.get("/recipes/:id", asyncHandler(async (req, res) => {
     return;
   }
   res.json(detail);
+}));
+
+recipesRouter.delete("/recipes/:id", asyncHandler(async (req, res) => {
+  // FK cascades remove ingredients, recipe_tags, and meal_plan_recipes rows.
+  const r = await query("DELETE FROM recipes WHERE id = $1", [req.params.id]);
+  if (r.rowCount === 0) {
+    res.status(404).json({ error: "recipe not found" });
+    return;
+  }
+  res.json({ ok: true });
 }));

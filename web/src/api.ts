@@ -17,6 +17,7 @@ export interface RecipeSummary {
   extraction_partial: boolean;
   created_at: string;
   tags: { category: string; value: string }[];
+  ingredient_names: string[];
 }
 
 export interface RecipeDetail {
@@ -67,6 +68,7 @@ export interface GroceryItem {
   quantity: number | null;
   unit: string | null;
   checked: boolean;
+  category: string | null;
 }
 
 export interface Staple {
@@ -91,6 +93,7 @@ export const api = {
     req<ChatResponse>("/api/chat", { method: "POST", body: JSON.stringify({ messages }) }),
   recipes: () => req<RecipeSummary[]>("/api/recipes"),
   recipe: (id: string) => req<RecipeDetail>(`/api/recipes/${id}`),
+  deleteRecipe: (id: string) => req(`/api/recipes/${id}`, { method: "DELETE" }),
   tags: () => req<Tag[]>("/api/tags"),
   renameTag: (id: string, value: string) =>
     req(`/api/tags/${id}`, { method: "PATCH", body: JSON.stringify({ value }) }),

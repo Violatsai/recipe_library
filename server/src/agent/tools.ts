@@ -11,6 +11,17 @@ export interface ToolEvent {
   output: unknown;
 }
 
+/** Store sections for grocery lists — assigned by the agent at consolidation. */
+export const GROCERY_CATEGORIES = [
+  "produce",
+  "meat & seafood",
+  "dairy & eggs",
+  "condiments & sauces",
+  "spices & seasoning",
+  "grains & pantry",
+  "other",
+] as const;
+
 /** Deterministic serving scale for grocery lines (pure — unit-tested). */
 export function scaleQuantity(
   quantity: number | null,
@@ -162,7 +173,8 @@ export function buildTools(events: ToolEvent[]): BetaRunnableTool<unknown>[] {
   const saveGroceryList = record(
     "save_grocery_list",
     "Persist the FINAL consolidated grocery list for a meal plan (after merging duplicates " +
-      "and removing pantry staples). Pass one entry per distinct item.",
+      "and removing pantry staples). Pass one entry per distinct item, each with its store " +
+      "section `category` so the list renders grouped for shopping.",
     z.object({
       meal_plan_id: z.string(),
       items: z.array(
@@ -170,6 +182,7 @@ export function buildTools(events: ToolEvent[]): BetaRunnableTool<unknown>[] {
           name: z.string(),
           quantity: z.number().nullable().optional(),
           unit: z.string().nullable().optional(),
+          category: z.enum(GROCERY_CATEGORIES),
         }),
       ),
     }),
@@ -183,8 +196,8 @@ export function buildTools(events: ToolEvent[]): BetaRunnableTool<unknown>[] {
         ).rows[0]!;
         for (const it of items) {
           await client.query(
-            "INSERT INTO grocery_items (grocery_list_id, name, quantity, unit) VALUES ($1, $2, $3, $4)",
-            [list.id, it.name, it.quantity ?? null, it.unit ?? null],
+            "INSERT INTO grocery_items (grocery_list_id, name, quantity, unit, category) VALUES ($1, $2, $3, $4, $5)",
+            [list.id, it.name, it.quantity ?? null, it.unit ?? null, it.category],
           );
         }
         return { grocery_list_id: list.id, count: items.length };

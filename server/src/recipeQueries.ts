@@ -14,6 +14,8 @@ export interface RecipeSummary {
   extraction_partial: boolean;
   created_at: string;
   tags: { category: string; value: string }[];
+  /** normalized ingredient names — lets the library search match by contents */
+  ingredient_names: string[];
 }
 
 export interface RecipeDetail {
@@ -41,9 +43,15 @@ export async function listRecipes(): Promise<RecipeSummary[]> {
       kcal: number | null;
       extraction_partial: boolean;
       created_at: string;
+      ingredient_names: string[];
     }>(
-      `SELECT id, title, source_type, total_time_min, kcal, extraction_partial, created_at
-         FROM recipes ORDER BY created_at DESC`,
+      `SELECT r.id, r.title, r.source_type, r.total_time_min, r.kcal, r.extraction_partial,
+              r.created_at,
+              coalesce(
+                (SELECT array_agg(DISTINCT i.name) FROM ingredients i WHERE i.recipe_id = r.id),
+                '{}'
+              ) AS ingredient_names
+         FROM recipes r ORDER BY r.created_at DESC`,
     )
   ).rows;
   if (rows.length === 0) return [];

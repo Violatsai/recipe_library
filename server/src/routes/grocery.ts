@@ -8,8 +8,15 @@ export const groceryRouter = Router();
 /** Items of one saved grocery list (with ids, so the UI can toggle checkboxes). */
 groceryRouter.get("/grocery-lists/:id", asyncHandler(async (req, res) => {
   const items = (
-    await query<{ id: string; name: string; quantity: number | null; unit: string | null; checked: boolean }>(
-      "SELECT id, name, quantity, unit, checked FROM grocery_items WHERE grocery_list_id = $1 ORDER BY name",
+    await query<{
+      id: string;
+      name: string;
+      quantity: number | null;
+      unit: string | null;
+      checked: boolean;
+      category: string | null;
+    }>(
+      "SELECT id, name, quantity, unit, checked, category FROM grocery_items WHERE grocery_list_id = $1 ORDER BY category NULLS LAST, name",
       [req.params.id],
     )
   ).rows;
