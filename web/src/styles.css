@@ -190,8 +190,23 @@ td.num, .num { font-variant-numeric: tabular-nums; }
 }
 .danger-btn:hover { border-color: #B03A2E; background: var(--flag-soft); }
 .lib-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(250px, 1fr)); gap: 12px; }
-.lib-card { text-align: left; border: 1px solid var(--line); background: var(--panel); border-radius: var(--radius); padding: 14px 16px; box-shadow: var(--shadow); }
+.lib-card {
+  position: relative; cursor: pointer; text-align: left;
+  border: 1px solid var(--line); background: var(--panel);
+  border-radius: var(--radius); padding: 14px 16px; box-shadow: var(--shadow);
+  font: inherit; color: inherit;
+}
 .lib-card:hover { border-color: var(--accent); }
+.lib-card:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.card-delete {
+  position: absolute; top: 8px; right: 8px;
+  width: 22px; height: 22px; line-height: 1;
+  border: none; border-radius: 999px;
+  background: transparent; color: var(--faint);
+  font-size: 15px; font-weight: 600;
+}
+.lib-card:hover .card-delete, .card-delete:focus-visible { background: var(--line-soft); }
+.card-delete:hover { background: var(--flag-soft); color: #B03A2E; }
 .back-btn { border: none; background: none; color: var(--accent); font-weight: 600; padding: 0; margin-bottom: 14px; }
 
 /* ---- settings ---- */

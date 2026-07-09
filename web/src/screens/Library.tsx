@@ -53,7 +53,7 @@ export function Library() {
     });
   };
 
-  const deleteRecipe = async (r: RecipeDetail) => {
+  const deleteRecipe = async (r: { id: string; title: string }) => {
     if (!confirm(`Delete "${r.title}" from your library? This also removes it from any meal plans.`)) {
       return;
     }
@@ -125,13 +125,36 @@ export function Library() {
         <div className="empty">Nothing matches those filters.</div>
       )}
       <div className="lib-grid">
-        {filtered.map((r) => (
-          <button
+        {filtered.map((r) => {
+          const open = () => api.recipe(r.id).then(setDetail).catch((e) => setError(e.message));
+          return (
+          // div, not button: the delete control inside must be a real <button>,
+          // and buttons can't nest. Keyboard access preserved via role + Enter/Space.
+          <div
             className="lib-card"
             key={r.id}
-            onClick={() => api.recipe(r.id).then(setDetail).catch((e) => setError(e.message))}
+            role="button"
+            tabIndex={0}
+            onClick={open}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" || e.key === " ") {
+                e.preventDefault();
+                void open();
+              }
+            }}
           >
-            <h3 style={{ margin: "0 0 6px", fontSize: 15 }}>{r.title}</h3>
+            <button
+              className="card-delete"
+              title={`Delete "${r.title}"`}
+              aria-label={`Delete ${r.title}`}
+              onClick={(e) => {
+                e.stopPropagation(); // don't open the detail view
+                void deleteRecipe(r);
+              }}
+            >
+              ×
+            </button>
+            <h3 style={{ margin: "0 0 6px", fontSize: 15, paddingRight: 22 }}>{r.title}</h3>
             <div className="meta-row">
               {r.tags.map((t) => (
                 <span
@@ -152,8 +175,9 @@ export function Library() {
               )}
               {r.extraction_partial && <span className="badge-partial">partial</span>}
             </div>
-          </button>
-        ))}
+          </div>
+          );
+        })}
       </div>
     </div>
   );
