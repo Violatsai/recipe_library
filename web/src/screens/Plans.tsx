@@ -4,7 +4,15 @@ import { GroceryListCard, MealPlanCard, RecipeOverlay } from "../components";
 
 /** Persistent home for meal plans + grocery lists — everything the chat agent
  *  creates lands here, editable and checkable after the conversation is gone. */
-export function Plans() {
+export function Plans({
+  active,
+  openPlanId,
+  onOpenConsumed,
+}: {
+  active: boolean;
+  openPlanId: string | null;
+  onOpenConsumed: () => void;
+}) {
   const [plans, setPlans] = useState<MealPlanSummary[] | null>(null);
   const [selected, setSelected] = useState<MealPlanSummary | null>(null);
   const [viewRecipe, setViewRecipe] = useState<string | null>(null);
@@ -22,7 +30,21 @@ export function Plans() {
       })
       .catch((e) => setError(e.message));
   };
-  useEffect(load, []);
+  // refresh whenever the tab becomes visible (screens stay mounted now)
+  useEffect(() => {
+    if (active) load();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [active]);
+
+  // chat's "View in Plans →" lands here: preselect once the list has loaded
+  useEffect(() => {
+    if (openPlanId && plans) {
+      const p = plans.find((x) => x.id === openPlanId);
+      if (p) setSelected(p);
+      onOpenConsumed();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [openPlanId, plans]);
 
   const patchPlan = async (id: string, patch: { title?: string; start_date?: string | null }) => {
     try {

@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { api, type RecipeDetail, type RecipeSummary } from "../api";
 import { EstBadge, RecipeDetailView } from "../components";
 
-export function Library() {
+export function Library({ active }: { active: boolean }) {
   const [recipes, setRecipes] = useState<RecipeSummary[] | null>(null);
   const [detail, setDetail] = useState<RecipeDetail | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -12,7 +12,11 @@ export function Library() {
   const load = () => {
     api.recipes().then(setRecipes).catch((e) => setError(e.message));
   };
-  useEffect(load, []);
+  // refresh whenever the tab becomes visible (screens stay mounted now)
+  useEffect(() => {
+    if (active) load();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [active]);
 
   // Only offer tags that are actually in use, grouped for the filter row.
   const usedTags = useMemo(() => {

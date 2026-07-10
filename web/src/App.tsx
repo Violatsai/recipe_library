@@ -15,6 +15,16 @@ const TAB_LABELS: Record<Tab, string> = {
 
 export function App() {
   const [tab, setTab] = useState<Tab>("chat");
+  // set when chat's "View in Plans" is clicked; Plans consumes it to preselect
+  const [planToOpen, setPlanToOpen] = useState<string | null>(null);
+
+  const viewPlan = (planId: string) => {
+    setPlanToOpen(planId);
+    setTab("plans");
+  };
+
+  // All screens stay mounted (hidden via CSS) so chat history and screen state
+  // survive tab switches — required for "View in Plans" to be a round trip.
   return (
     <div className="app">
       <header className="topbar">
@@ -28,10 +38,22 @@ export function App() {
         </nav>
       </header>
       <main className="screen">
-        {tab === "chat" && <Chat />}
-        {tab === "library" && <Library />}
-        {tab === "plans" && <Plans />}
-        {tab === "settings" && <Settings />}
+        <div className="tab-panel" hidden={tab !== "chat"}>
+          <Chat onViewPlan={viewPlan} />
+        </div>
+        <div className="tab-panel" hidden={tab !== "library"}>
+          <Library active={tab === "library"} />
+        </div>
+        <div className="tab-panel" hidden={tab !== "plans"}>
+          <Plans
+            active={tab === "plans"}
+            openPlanId={planToOpen}
+            onOpenConsumed={() => setPlanToOpen(null)}
+          />
+        </div>
+        <div className="tab-panel" hidden={tab !== "settings"}>
+          <Settings active={tab === "settings"} />
+        </div>
       </main>
     </div>
   );

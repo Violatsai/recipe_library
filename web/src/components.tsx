@@ -162,10 +162,13 @@ export function MealPlanCard({
   planId,
   onOpenRecipe,
   editableDays = false,
+  onViewInPlans,
 }: {
   planId: string;
   onOpenRecipe?: (recipeId: string) => void;
   editableDays?: boolean;
+  /** chat only: renders the "Saved ✓ / View in Plans →" footer */
+  onViewInPlans?: () => void;
 }) {
   const [plan, setPlan] = useState<MealPlan | null>(null);
   const load = () => api.mealPlan(planId).then(setPlan).catch(() => setPlan(null));
@@ -224,6 +227,12 @@ export function MealPlanCard({
           ))}
         </tbody>
       </table>
+      {onViewInPlans && (
+        <div className="card-foot">
+          <span className="saved-note">✓ Saved — this plan is kept even after the chat is gone</span>
+          <button className="mini-btn" onClick={onViewInPlans}>View in Plans →</button>
+        </div>
+      )}
     </div>
   );
 }

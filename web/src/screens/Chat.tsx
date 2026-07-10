@@ -18,9 +18,11 @@ interface ChatTurn {
 function EventCards({
   events,
   onOpenRecipe,
+  onViewPlan,
 }: {
   events: ToolEvent[];
   onOpenRecipe: (recipeId: string) => void;
+  onViewPlan: (planId: string) => void;
 }) {
   const cards: React.ReactNode[] = [];
   events.forEach((e, idx) => {
@@ -32,7 +34,14 @@ function EventCards({
       if (!("error" in out)) cards.push(<RecipeDetailView key={idx} detail={out} />);
     } else if (e.tool === "create_meal_plan") {
       const out = e.output as { meal_plan_id: string };
-      cards.push(<MealPlanCard key={idx} planId={out.meal_plan_id} onOpenRecipe={onOpenRecipe} />);
+      cards.push(
+        <MealPlanCard
+          key={idx}
+          planId={out.meal_plan_id}
+          onOpenRecipe={onOpenRecipe}
+          onViewInPlans={() => onViewPlan(out.meal_plan_id)}
+        />,
+      );
     } else if (e.tool === "save_grocery_list") {
       const out = e.output as { grocery_list_id: string };
       cards.push(<GroceryListCard key={idx} listId={out.grocery_list_id} />);
@@ -44,7 +53,7 @@ function EventCards({
   return <div className="cards">{cards}</div>;
 }
 
-export function Chat() {
+export function Chat({ onViewPlan }: { onViewPlan: (planId: string) => void }) {
   const [turns, setTurns] = useState<ChatTurn[]>([]);
   const [draft, setDraft] = useState("");
   const [busy, setBusy] = useState(false);
@@ -90,7 +99,9 @@ export function Chat() {
               <div className="bubble user" key={idx}>{t.content}</div>
             ) : (
               <div className="bubble assistant" key={idx}>
-                {t.events && <EventCards events={t.events} onOpenRecipe={setViewRecipe} />}
+                {t.events && (
+                  <EventCards events={t.events} onOpenRecipe={setViewRecipe} onViewPlan={onViewPlan} />
+                )}
                 <div className="reply">{t.content}</div>
               </div>
             ),

@@ -95,7 +95,7 @@ function TagRow({
   );
 }
 
-export function Settings() {
+export function Settings({ active }: { active: boolean }) {
   const [staples, setStaples] = useState<Staple[]>([]);
   const [tags, setTags] = useState<Tag[]>([]);
   const [newStaple, setNewStaple] = useState("");
@@ -104,7 +104,11 @@ export function Settings() {
     void api.pantry().then(setStaples);
     void api.tags().then(setTags);
   };
-  useEffect(reload, []);
+  // refresh whenever the tab becomes visible (screens stay mounted now)
+  useEffect(() => {
+    if (active) reload();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [active]);
 
   const addStaple = async () => {
     const name = newStaple.trim();
