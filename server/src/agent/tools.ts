@@ -205,6 +205,53 @@ export function buildTools(events: ToolEvent[]): BetaRunnableTool<unknown>[] {
     },
   );
 
+  const addPantryStaples = record(
+    "add_pantry_staples",
+    "Add items to the user's PERMANENT pantry staples (things they always keep on hand — " +
+      "these are excluded from every future grocery list). Only call when the user says they " +
+      "always have an item or explicitly asks to add it to their staples/pantry. Do NOT call " +
+      "for one-off 'I already have X this week' remarks.",
+    z.object({ names: z.array(z.string().min(1)).min(1) }),
+    async ({ names }) => {
+      const added: string[] = [];
+      const already: string[] = [];
+      for (const raw of names) {
+        const name = raw.trim().toLowerCase();
+        if (!name) continue;
+        const r = await query<{ name: string }>(
+          "INSERT INTO pantry_staples (name) VALUES ($1) ON CONFLICT (name) DO NOTHING RETURNING name",
+          [name],
+        );
+        (r.rowCount === 0 ? already : added).push(name);
+      }
+      const staples = (
+        await query<{ name: string }>("SELECT name FROM pantry_staples ORDER BY name")
+      ).rows.map((r) => r.name);
+      return { added, already_present: already, staples };
+    },
+  );
+
+  const removePantryStaples = record(
+    "remove_pantry_staples",
+    "Remove items from the user's permanent pantry staples (they no longer keep it on hand, " +
+      "so it should start appearing on grocery lists again).",
+    z.object({ names: z.array(z.string().min(1)).min(1) }),
+    async ({ names }) => {
+      const removed: string[] = [];
+      const notFound: string[] = [];
+      for (const raw of names) {
+        const name = raw.trim().toLowerCase();
+        if (!name) continue;
+        const r = await query("DELETE FROM pantry_staples WHERE lower(name) = $1", [name]);
+        ((r.rowCount ?? 0) > 0 ? removed : notFound).push(name);
+      }
+      const staples = (
+        await query<{ name: string }>("SELECT name FROM pantry_staples ORDER BY name")
+      ).rows.map((r) => r.name);
+      return { removed, not_found: notFound, staples };
+    },
+  );
+
   return [
     searchRecipes,
     getRecipe,
@@ -212,5 +259,7 @@ export function buildTools(events: ToolEvent[]): BetaRunnableTool<unknown>[] {
     addRecipeToPlan,
     generateGroceryList,
     saveGroceryList,
+    addPantryStaples,
+    removePantryStaples,
   ] as BetaRunnableTool<unknown>[];
 }
