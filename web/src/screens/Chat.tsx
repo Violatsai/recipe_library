@@ -1,6 +1,12 @@
 import { useEffect, useRef, useState } from "react";
 import { api, type RecipeDetail, type SearchResult, type ToolEvent } from "../api";
-import { GroceryListCard, MealPlanCard, RecipeCards, RecipeDetailView } from "../components";
+import {
+  GroceryListCard,
+  MealPlanCard,
+  RecipeCards,
+  RecipeDetailView,
+  RecipeOverlay,
+} from "../components";
 
 interface ChatTurn {
   role: "user" | "assistant";
@@ -9,18 +15,24 @@ interface ChatTurn {
 }
 
 /** Render the cards for one assistant turn's tool events. */
-function EventCards({ events }: { events: ToolEvent[] }) {
+function EventCards({
+  events,
+  onOpenRecipe,
+}: {
+  events: ToolEvent[];
+  onOpenRecipe: (recipeId: string) => void;
+}) {
   const cards: React.ReactNode[] = [];
   events.forEach((e, idx) => {
     if (e.tool === "search_recipes") {
       const out = e.output as { results?: SearchResult[] };
-      cards.push(<RecipeCards key={idx} results={out.results ?? []} />);
+      cards.push(<RecipeCards key={idx} results={out.results ?? []} onOpen={onOpenRecipe} />);
     } else if (e.tool === "get_recipe") {
       const out = e.output as RecipeDetail | { error: string };
       if (!("error" in out)) cards.push(<RecipeDetailView key={idx} detail={out} />);
     } else if (e.tool === "create_meal_plan") {
       const out = e.output as { meal_plan_id: string };
-      cards.push(<MealPlanCard key={idx} planId={out.meal_plan_id} />);
+      cards.push(<MealPlanCard key={idx} planId={out.meal_plan_id} onOpenRecipe={onOpenRecipe} />);
     } else if (e.tool === "save_grocery_list") {
       const out = e.output as { grocery_list_id: string };
       cards.push(<GroceryListCard key={idx} listId={out.grocery_list_id} />);
@@ -37,6 +49,7 @@ export function Chat() {
   const [draft, setDraft] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [viewRecipe, setViewRecipe] = useState<string | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -77,7 +90,7 @@ export function Chat() {
               <div className="bubble user" key={idx}>{t.content}</div>
             ) : (
               <div className="bubble assistant" key={idx}>
-                {t.events && <EventCards events={t.events} />}
+                {t.events && <EventCards events={t.events} onOpenRecipe={setViewRecipe} />}
                 <div className="reply">{t.content}</div>
               </div>
             ),
@@ -86,6 +99,7 @@ export function Chat() {
           {error && <div className="bubble assistant error-note">Error: {error} — try again.</div>}
         </div>
       </div>
+      {viewRecipe && <RecipeOverlay recipeId={viewRecipe} onClose={() => setViewRecipe(null)} />}
       <div className="composer">
         <div className="composer-inner">
           <textarea

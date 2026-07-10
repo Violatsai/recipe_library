@@ -62,6 +62,22 @@ export interface MealPlan {
   entries: { recipe_id: string; title: string; day: string | null; meal_slot: string | null; servings: number | null }[];
 }
 
+export interface MealPlanSummary {
+  id: string;
+  title: string;
+  start_date: string | null;
+  created_at: string;
+  recipe_count: number;
+  latest_grocery_list_id: string | null;
+}
+
+export interface PlanRecipeIngredients {
+  recipe_id: string;
+  title: string;
+  servings: number | null;
+  items: { name: string; quantity: number | null; unit: string | null }[];
+}
+
 export interface GroceryItem {
   id: string;
   name: string;
@@ -104,7 +120,13 @@ export const api = {
   addStaple: (name: string) => req("/api/pantry", { method: "POST", body: JSON.stringify({ name }) }),
   removeStaple: (id: string) => req(`/api/pantry/${id}`, { method: "DELETE" }),
   mealPlan: (id: string) => req<MealPlan>(`/api/meal-plans/${id}`),
-  groceryList: (id: string) => req<{ id: string; items: GroceryItem[] }>(`/api/grocery-lists/${id}`),
+  mealPlans: () => req<MealPlanSummary[]>("/api/meal-plans"),
+  updateMealPlan: (id: string, patch: { title?: string; start_date?: string | null }) =>
+    req(`/api/meal-plans/${id}`, { method: "PATCH", body: JSON.stringify(patch) }),
+  deleteMealPlan: (id: string) => req(`/api/meal-plans/${id}`, { method: "DELETE" }),
+  planIngredients: (id: string) => req<PlanRecipeIngredients[]>(`/api/meal-plans/${id}/ingredients`),
+  groceryList: (id: string) =>
+    req<{ id: string; meal_plan_id: string; items: GroceryItem[] }>(`/api/grocery-lists/${id}`),
   toggleItem: (id: string, checked: boolean) =>
     req(`/api/grocery-items/${id}`, { method: "PATCH", body: JSON.stringify({ checked }) }),
 };

@@ -190,7 +190,7 @@ save_grocery_list(meal_plan_id, items[]) → grocery_list_id
 
 ## 04 · Chat UI
 
-A single web app and a single chat surface is the entry point for both retrieval and planning — potentially the same persistent thread rather than two screens. It renders the agent's tool results: recipe cards, a week's plan, an editable grocery list with staples already removed.
+A single web app; chat is the entry point for both retrieval and planning. It renders the agent's tool results: clickable recipe cards (→ detail overlay), a week's plan with hyperlinked recipes, and a grocery checklist with two views — by store section (persisted checkboxes) or by recipe (derived, read-only). Beyond chat: a **Library** tab (search by title/ingredient, tag filters, delete), a **Plans** tab (persistent home for meal plans + grocery lists, with editable title/date), and **Settings** (pantry + tag management).
 
 ---
 

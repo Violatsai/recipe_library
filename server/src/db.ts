@@ -6,6 +6,10 @@ import { config } from "./config.js";
 // values don't need arbitrary precision.
 pg.types.setTypeParser(1700, (v: string | null) => (v === null ? null : Number.parseFloat(v)));
 
+// Keep Postgres date (OID 1082) as the plain 'YYYY-MM-DD' string instead of a
+// JS Date at local midnight — meal-plan dates bind directly to <input type=date>.
+pg.types.setTypeParser(1082, (v: string | null) => v);
+
 /**
  * Single shared connection pool. Import `query` for one-shot statements and
  * `withTransaction` for multi-statement atomic work (e.g. the ingestion upsert).
