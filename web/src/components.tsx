@@ -156,18 +156,28 @@ export function RecipeDetailView({ detail }: { detail: RecipeDetail }) {
 }
 
 /** Meal plan card — fetches by id (rows exist by the time the reply renders).
- *  Recipe titles become links when onOpenRecipe is provided. */
+ *  Recipe titles become links when onOpenRecipe is provided; day cells become
+ *  date inputs when editableDays is set (Plans tab). */
 export function MealPlanCard({
   planId,
   onOpenRecipe,
+  editableDays = false,
 }: {
   planId: string;
   onOpenRecipe?: (recipeId: string) => void;
+  editableDays?: boolean;
 }) {
   const [plan, setPlan] = useState<MealPlan | null>(null);
+  const load = () => api.mealPlan(planId).then(setPlan).catch(() => setPlan(null));
   useEffect(() => {
-    api.mealPlan(planId).then(setPlan).catch(() => setPlan(null));
+    void load();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [planId]);
+
+  const setDay = (entryId: string, day: string | null) => {
+    void api.updatePlanEntry(entryId, day).then(load).catch(load);
+  };
+
   if (!plan) return null;
   return (
     <div className="card">
@@ -186,8 +196,19 @@ export function MealPlanCard({
         </thead>
         <tbody>
           {plan.entries.map((e, idx) => (
-            <tr key={idx}>
-              <td>{e.day ?? "—"}</td>
+            <tr key={e.entry_id ?? idx}>
+              <td>
+                {editableDays ? (
+                  <input
+                    className="day-input"
+                    type="date"
+                    value={e.day ?? ""}
+                    onChange={(ev) => setDay(e.entry_id, ev.target.value === "" ? null : ev.target.value)}
+                  />
+                ) : (
+                  e.day ?? "—"
+                )}
+              </td>
               <td>{e.meal_slot ?? "—"}</td>
               <td>
                 {onOpenRecipe ? (

@@ -303,3 +303,8 @@ td.num, .num { font-variant-numeric: tabular-nums; }
   border: 1px solid var(--line); border-radius: 8px; background: var(--raise);
   padding: 7px 10px; min-width: 220px;
 }
+.day-input {
+  border: 1px solid var(--line); border-radius: 6px; background: var(--raise);
+  padding: 2px 6px; font-size: 13px; color: inherit;
+}
+.day-input:hover { border-color: var(--accent); }

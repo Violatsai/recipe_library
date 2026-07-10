@@ -185,8 +185,15 @@ groceryRouter.get("/meal-plans/:id", asyncHandler(async (req, res) => {
     return;
   }
   const entries = (
-    await query<{ recipe_id: string; title: string; day: string | null; meal_slot: string | null; servings: number | null }>(
-      `SELECT mpr.recipe_id, r.title, mpr.day, mpr.meal_slot, mpr.servings
+    await query<{
+      entry_id: string;
+      recipe_id: string;
+      title: string;
+      day: string | null;
+      meal_slot: string | null;
+      servings: number | null;
+    }>(
+      `SELECT mpr.id AS entry_id, mpr.recipe_id, r.title, mpr.day, mpr.meal_slot, mpr.servings
          FROM meal_plan_recipes mpr JOIN recipes r ON r.id = mpr.recipe_id
          WHERE mpr.meal_plan_id = $1
          ORDER BY mpr.day NULLS LAST, mpr.meal_slot NULLS LAST, r.title`,
@@ -194,4 +201,26 @@ groceryRouter.get("/meal-plans/:id", asyncHandler(async (req, res) => {
     )
   ).rows;
   res.json({ ...plan, entries });
+}));
+
+const EntryPatch = z.object({
+  day: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullable(),
+});
+
+/** Edit one plan entry's day ('YYYY-MM-DD' or null to clear). */
+groceryRouter.patch("/meal-plan-recipes/:id", asyncHandler(async (req, res) => {
+  const parsed = EntryPatch.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: "day must be 'YYYY-MM-DD' or null" });
+    return;
+  }
+  const r = await query("UPDATE meal_plan_recipes SET day = $1 WHERE id = $2", [
+    parsed.data.day,
+    req.params.id,
+  ]);
+  if (r.rowCount === 0) {
+    res.status(404).json({ error: "plan entry not found" });
+    return;
+  }
+  res.json({ ok: true });
 }));

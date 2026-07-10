@@ -87,7 +87,12 @@ export function Plans() {
         </div>
 
         <div className="cards">
-          <MealPlanCard key={`p-${version}`} planId={selected.id} onOpenRecipe={setViewRecipe} />
+          <MealPlanCard
+            key={`p-${version}`}
+            planId={selected.id}
+            onOpenRecipe={setViewRecipe}
+            editableDays
+          />
           {selected.latest_grocery_list_id ? (
             <GroceryListCard listId={selected.latest_grocery_list_id} />
           ) : (

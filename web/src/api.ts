@@ -59,7 +59,14 @@ export interface MealPlan {
   id: string;
   title: string;
   start_date: string | null;
-  entries: { recipe_id: string; title: string; day: string | null; meal_slot: string | null; servings: number | null }[];
+  entries: {
+    entry_id: string;
+    recipe_id: string;
+    title: string;
+    day: string | null;
+    meal_slot: string | null;
+    servings: number | null;
+  }[];
 }
 
 export interface MealPlanSummary {
@@ -124,6 +131,8 @@ export const api = {
   updateMealPlan: (id: string, patch: { title?: string; start_date?: string | null }) =>
     req(`/api/meal-plans/${id}`, { method: "PATCH", body: JSON.stringify(patch) }),
   deleteMealPlan: (id: string) => req(`/api/meal-plans/${id}`, { method: "DELETE" }),
+  updatePlanEntry: (entryId: string, day: string | null) =>
+    req(`/api/meal-plan-recipes/${entryId}`, { method: "PATCH", body: JSON.stringify({ day }) }),
   planIngredients: (id: string) => req<PlanRecipeIngredients[]>(`/api/meal-plans/${id}/ingredients`),
   groceryList: (id: string) =>
     req<{ id: string; meal_plan_id: string; items: GroceryItem[] }>(`/api/grocery-lists/${id}`),
