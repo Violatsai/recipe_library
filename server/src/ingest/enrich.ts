@@ -73,6 +73,7 @@ function systemPrompt(vocab: ApprovedTags): string {
 
 Rules:
 - title, servings, total_time_min, and ordered steps.
+- Recipes may be in ANY language. Regardless of source language: ingredients "name" and defining_ingredients are ALWAYS normalized lowercase ENGLISH (translate; keep culturally specific items romanized, e.g. "doubanjiang", "miso"); "raw_text" stays VERBATIM in the source language. For non-English sources, give the title as the original followed by an English translation in parentheses, and write each step in the source language followed by an English translation in parentheses. Parse quantities from source-language units (e.g. 半茶匙 → 0.5 tsp).
 - ingredients: "name" is the normalized lowercase ingredient (e.g. "garlic"); parse "quantity" and "unit" when present (null when there is none, e.g. "a pinch"); "raw_text" is the original line, verbatim.
 - defining_ingredients: the subset of ingredient names that CHARACTERIZE the dish — distinctive proteins, flavor bases, or components (e.g. "miso", "gochujang", "salmon"). Exclude ubiquitous staples (salt, water, oil, sugar, flour) even when present. Choose by distinctiveness, NOT quantity: a small amount of a defining ingredient still counts.
 - tags: classify into the APPROVED VOCABULARY below, using ONLY values from these lists. A recipe may have several cuisine/dietary tags, or none. Infer dietary tags from the ingredients (e.g. no meat or fish -> vegetarian; also vegan / gluten-free / dairy-free when the ingredients clearly support it).
