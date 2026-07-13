@@ -24,12 +24,20 @@ function EventCards({
   onOpenRecipe: (recipeId: string) => void;
   onViewPlan: (planId: string) => void;
 }) {
+  // When a turn BUILDS something (plan/grocery), its search_recipes/get_recipe
+  // calls are instrumental lookups (the agent re-finding ids — history is
+  // text-only), not suggestions to present. Rendering them again after the
+  // user already confirmed their choices reads as the agent second-guessing.
+  const isBuildTurn = events.some((e) =>
+    ["create_meal_plan", "add_recipe_to_plan", "generate_grocery_list", "save_grocery_list"].includes(e.tool),
+  );
+
   const cards: React.ReactNode[] = [];
   events.forEach((e, idx) => {
-    if (e.tool === "search_recipes") {
+    if (e.tool === "search_recipes" && !isBuildTurn) {
       const out = e.output as { results?: SearchResult[] };
       cards.push(<RecipeCards key={idx} results={out.results ?? []} onOpen={onOpenRecipe} />);
-    } else if (e.tool === "get_recipe") {
+    } else if (e.tool === "get_recipe" && !isBuildTurn) {
       const out = e.output as RecipeDetail | { error: string };
       if (!("error" in out)) cards.push(<RecipeDetailView key={idx} detail={out} />);
     } else if (e.tool === "create_meal_plan") {
