@@ -3,13 +3,26 @@ import { asyncHandler } from "../http.js";
 import { z } from "zod";
 import { scaleQuantity } from "../agent/tools.js";
 import { query } from "../db.js";
-import { REMINDERS_LIST_NAME, sendToReminders } from "../reminders.js";
+import { groceryListName, sendToReminders } from "../reminders.js";
 
 export const groceryRouter = Router();
 
 /** Push a grocery list's UNCHECKED items to Apple Reminders (iCloud → phone).
- *  User-initiated via a button click — the app's first outward action. */
+ *  User-initiated via a button click — the app's first outward action.
+ *  The Reminders list is named after the plan so multiple plans coexist. */
 groceryRouter.post("/grocery-lists/:id/send-to-reminders", asyncHandler(async (req, res) => {
+  const plan = (
+    await query<{ title: string; start_date: string | null }>(
+      `SELECT mp.title, mp.start_date FROM grocery_lists gl
+         JOIN meal_plans mp ON mp.id = gl.meal_plan_id
+         WHERE gl.id = $1`,
+      [req.params.id],
+    )
+  ).rows[0];
+  if (!plan) {
+    res.status(404).json({ error: "grocery list not found" });
+    return;
+  }
   const items = (
     await query<{ name: string; quantity: number | null; unit: string | null; category: string | null }>(
       `SELECT name, quantity, unit, category FROM grocery_items
@@ -22,6 +35,7 @@ groceryRouter.post("/grocery-lists/:id/send-to-reminders", asyncHandler(async (r
     res.status(400).json({ error: "no unchecked items to send (is the list already done?)" });
     return;
   }
+  const listName = groceryListName(plan.title, plan.start_date);
   const sent = await sendToReminders(
     items.map((i) => ({
       title: [i.name, i.quantity != null ? `${i.quantity}${i.unit ? ` ${i.unit}` : ""}` : i.unit ?? ""]
@@ -29,8 +43,9 @@ groceryRouter.post("/grocery-lists/:id/send-to-reminders", asyncHandler(async (r
         .join(" — "),
       section: i.category ?? "other",
     })),
+    listName,
   );
-  res.json({ sent, list: REMINDERS_LIST_NAME });
+  res.json({ sent, list: listName });
 }));
 
 /** Items of one saved grocery list (with ids, so the UI can toggle checkboxes).

@@ -247,6 +247,7 @@ export function GroceryListCard({ listId }: { listId: string }) {
   const [perRecipe, setPerRecipe] = useState<PlanRecipeIngredients[] | null>(null);
   const [sendState, setSendState] = useState<"idle" | "busy" | "sent" | "copied" | "error">("idle");
   const [sendError, setSendError] = useState<string | null>(null);
+  const [sentListName, setSentListName] = useState<string | null>(null);
 
   useEffect(() => {
     api
@@ -312,9 +313,9 @@ export function GroceryListCard({ listId }: { listId: string }) {
     setSendError(null);
     try {
       const r = await api.sendListToReminders(listId);
+      setSentListName(r.list);
       setSendState("sent");
-      setTimeout(() => setSendState("idle"), 4000);
-      void r;
+      setTimeout(() => setSendState("idle"), 6000);
     } catch (e) {
       setSendState("error");
       setSendError(e instanceof Error ? e.message : "send failed");
@@ -400,7 +401,7 @@ export function GroceryListCard({ listId }: { listId: string }) {
 
       <div className="card-foot">
         <span className="grocery-note" style={{ margin: 0 }}>
-          {sendState === "sent" && "Sent ✓ — open Reminders on your phone (list: Recipe Library Groceries)"}
+          {sendState === "sent" && `Sent ✓ — look for “${sentListName}” in Reminders on your phone`}
           {sendState === "copied" && "Copied ✓ — paste it anywhere"}
           {sendState === "busy" && "Sending…"}
           {sendState === "error" && <span className="error-note">{sendError}</span>}

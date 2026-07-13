@@ -14,7 +14,13 @@ const execFileAsync = promisify(execFile);
  * a denial surfaces as error -1743, which we translate for the UI.
  */
 
-export const REMINDERS_LIST_NAME = "Recipe Library Groceries";
+/** Per-plan list name so multiple plans stay distinguishable in Reminders.
+ *  Resends match by this exact name (wipe-and-replace), so renaming a plan and
+ *  resending creates a fresh list and leaves the old one behind — the UI
+ *  message always names the list that was written. */
+export function groceryListName(planTitle: string, startDate: string | null): string {
+  return `Groceries — ${planTitle}${startDate ? ` (${startDate})` : ""}`;
+}
 
 export interface ReminderItem {
   title: string;
@@ -45,8 +51,8 @@ function run(argv) {
 }
 `;
 
-export async function sendToReminders(items: ReminderItem[]): Promise<number> {
-  const payload = JSON.stringify({ listName: REMINDERS_LIST_NAME, items });
+export async function sendToReminders(items: ReminderItem[], listName: string): Promise<number> {
+  const payload = JSON.stringify({ listName, items });
   try {
     const { stdout } = await execFileAsync(
       "osascript",
