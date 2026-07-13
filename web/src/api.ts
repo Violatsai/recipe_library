@@ -138,4 +138,9 @@ export const api = {
     req<{ id: string; meal_plan_id: string; items: GroceryItem[] }>(`/api/grocery-lists/${id}`),
   toggleItem: (id: string, checked: boolean) =>
     req(`/api/grocery-items/${id}`, { method: "PATCH", body: JSON.stringify({ checked }) }),
+  sendListToReminders: (listId: string) =>
+    req<{ sent: number; list: string }>(`/api/grocery-lists/${listId}/send-to-reminders`, {
+      method: "POST",
+      body: JSON.stringify({}),
+    }),
 };

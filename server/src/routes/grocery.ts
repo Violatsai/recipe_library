@@ -3,8 +3,35 @@ import { asyncHandler } from "../http.js";
 import { z } from "zod";
 import { scaleQuantity } from "../agent/tools.js";
 import { query } from "../db.js";
+import { REMINDERS_LIST_NAME, sendToReminders } from "../reminders.js";
 
 export const groceryRouter = Router();
+
+/** Push a grocery list's UNCHECKED items to Apple Reminders (iCloud → phone).
+ *  User-initiated via a button click — the app's first outward action. */
+groceryRouter.post("/grocery-lists/:id/send-to-reminders", asyncHandler(async (req, res) => {
+  const items = (
+    await query<{ name: string; quantity: number | null; unit: string | null; category: string | null }>(
+      `SELECT name, quantity, unit, category FROM grocery_items
+         WHERE grocery_list_id = $1 AND NOT checked
+         ORDER BY category NULLS LAST, name`,
+      [req.params.id],
+    )
+  ).rows;
+  if (items.length === 0) {
+    res.status(400).json({ error: "no unchecked items to send (is the list already done?)" });
+    return;
+  }
+  const sent = await sendToReminders(
+    items.map((i) => ({
+      title: [i.name, i.quantity != null ? `${i.quantity}${i.unit ? ` ${i.unit}` : ""}` : i.unit ?? ""]
+        .filter(Boolean)
+        .join(" — "),
+      section: i.category ?? "other",
+    })),
+  );
+  res.json({ sent, list: REMINDERS_LIST_NAME });
+}));
 
 /** Items of one saved grocery list (with ids, so the UI can toggle checkboxes).
  *  Includes meal_plan_id so the UI can offer the per-recipe view of the same plan. */

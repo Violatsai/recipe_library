@@ -245,6 +245,8 @@ export function GroceryListCard({ listId }: { listId: string }) {
   const [planId, setPlanId] = useState<string | null>(null);
   const [mode, setMode] = useState<"section" | "recipe">("section");
   const [perRecipe, setPerRecipe] = useState<PlanRecipeIngredients[] | null>(null);
+  const [sendState, setSendState] = useState<"idle" | "busy" | "sent" | "copied" | "error">("idle");
+  const [sendError, setSendError] = useState<string | null>(null);
 
   useEffect(() => {
     api
@@ -279,6 +281,45 @@ export function GroceryListCard({ listId }: { listId: string }) {
     const cat = i.category ?? "other";
     sections.set(cat, [...(sections.get(cat) ?? []), i]);
   }
+
+  const fmtQty = (i: GroceryItem) =>
+    [i.quantity != null ? String(i.quantity) : "", i.unit ?? ""].filter(Boolean).join(" ");
+
+  /** Plain-text export of the UNCHECKED items, grouped by section — paste anywhere. */
+  const copyList = async () => {
+    const lines: string[] = ["Grocery list"];
+    for (const [cat, group] of sections) {
+      const todo = group.filter((i) => !i.checked);
+      if (todo.length === 0) continue;
+      lines.push("", cat.toUpperCase());
+      for (const i of todo) {
+        const qty = fmtQty(i);
+        lines.push(`☐ ${i.name}${qty ? ` — ${qty}` : ""}`);
+      }
+    }
+    try {
+      await navigator.clipboard.writeText(lines.join("\n"));
+      setSendState("copied");
+      setTimeout(() => setSendState("idle"), 2500);
+    } catch {
+      setSendState("error");
+      setSendError("couldn't access the clipboard");
+    }
+  };
+
+  const sendToPhone = async () => {
+    setSendState("busy");
+    setSendError(null);
+    try {
+      const r = await api.sendListToReminders(listId);
+      setSendState("sent");
+      setTimeout(() => setSendState("idle"), 4000);
+      void r;
+    } catch (e) {
+      setSendState("error");
+      setSendError(e instanceof Error ? e.message : "send failed");
+    }
+  };
 
   return (
     <div className="card">
@@ -356,6 +397,22 @@ export function GroceryListCard({ listId }: { listId: string }) {
           off in the “By section” view.
         </p>
       )}
+
+      <div className="card-foot">
+        <span className="grocery-note" style={{ margin: 0 }}>
+          {sendState === "sent" && "Sent ✓ — open Reminders on your phone (list: Recipe Library Groceries)"}
+          {sendState === "copied" && "Copied ✓ — paste it anywhere"}
+          {sendState === "busy" && "Sending…"}
+          {sendState === "error" && <span className="error-note">{sendError}</span>}
+          {sendState === "idle" && "Send the unchecked items to your phone"}
+        </span>
+        <span className="foot-actions">
+          <button className="mini-btn ghost" onClick={() => void copyList()}>📋 Copy</button>
+          <button className="mini-btn" disabled={sendState === "busy"} onClick={() => void sendToPhone()}>
+            📱 Send to Reminders
+          </button>
+        </span>
+      </div>
     </div>
   );
 }
