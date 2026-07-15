@@ -124,9 +124,19 @@ export function RecipeDetailView({ detail }: { detail: RecipeDetail }) {
         <div>
           <h4>Ingredients</h4>
           <ul>
-            {detail.ingredients.map((i, idx) => (
-              <li key={idx}>{i.raw_text}</li>
-            ))}
+            {detail.ingredients.map((i, idx) => {
+              // raw_text is verbatim source language; append the normalized
+              // English name only when it isn't already in the line — so
+              // non-English recipes read "大蒜 6瓣 (garlic)" while English
+              // recipes stay untouched. Mirrors the bilingual steps format.
+              const needsGloss = !i.raw_text.toLowerCase().includes(i.name.toLowerCase());
+              return (
+                <li key={idx}>
+                  {i.raw_text}
+                  {needsGloss && <span className="gloss"> ({i.name})</span>}
+                </li>
+              );
+            })}
           </ul>
         </div>
         <div>
