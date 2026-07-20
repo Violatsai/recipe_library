@@ -32,6 +32,20 @@ describe("normalizeUrl — web pages", () => {
     );
   });
 
+  it("strips a trailing slash on the path", () => {
+    expect(normalizeUrl("https://example.com/recipe/")).toBe("https://example.com/recipe");
+  });
+
+  it("never collapses the root path", () => {
+    expect(normalizeUrl("https://example.com/")).toBe("https://example.com/");
+  });
+
+  it("trailing-slash and no-trailing-slash variants normalize equal (dedup)", () => {
+    expect(normalizeUrl("https://www.thespanishchef.com/recipes/pulpo-a-la-gallega")).toBe(
+      normalizeUrl("https://www.thespanishchef.com/recipes/pulpo-a-la-gallega/"),
+    );
+  });
+
   it("two links differing only by tracking + order normalize equal (dedup)", () => {
     const a = normalizeUrl("https://blog.test/pad-thai?utm_campaign=x&ref=1");
     const b = normalizeUrl("https://blog.test/pad-thai?ref=1&fbclid=zzz");

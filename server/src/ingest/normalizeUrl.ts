@@ -45,6 +45,12 @@ export function normalizeUrl(raw: string): string {
   const ytId = youtubeId(u);
   if (ytId) return `https://www.youtube.com/watch?v=${ytId}`;
 
+  // Strip a trailing slash on the path (but never collapse "/" itself) —
+  // "/recipe" and "/recipe/" are the same page and must dedupe identically.
+  if (u.pathname.length > 1 && u.pathname.endsWith("/")) {
+    u.pathname = u.pathname.slice(0, -1);
+  }
+
   const keep: [string, string][] = [];
   for (const [k, v] of u.searchParams.entries()) {
     if (k.startsWith("utm_")) continue;
