@@ -8,6 +8,7 @@
     "start": "tsx src/index.ts",
     "migrate": "tsx scripts/migrate.ts",
     "smoke": "tsx scripts/smoke.ts",
+    "import-bookmarks": "tsx scripts/bulk-import-bookmarks.ts",
     "test": "vitest run"
   },
   "dependencies": {
