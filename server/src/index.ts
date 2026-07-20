@@ -1,3 +1,5 @@
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 import express from "express";
 import { config } from "./config.js";
 import { query } from "./db.js";
@@ -8,8 +10,13 @@ import { pantryRouter } from "./routes/pantry.js";
 import { recipesRouter } from "./routes/recipes.js";
 import { tagsRouter } from "./routes/tags.js";
 
+const UPLOADS_DIR = path.resolve(fileURLToPath(import.meta.url), "../../uploads");
+
 const app = express();
-app.use(express.json({ limit: "5mb" }));
+// 25mb: photo uploads (base64-encoded phone photos) run larger than the
+// original 5mb text-ingestion limit.
+app.use(express.json({ limit: "25mb" }));
+app.use("/uploads", express.static(UPLOADS_DIR));
 
 // request log: method path -> status (ms)
 app.use((req, res, next) => {

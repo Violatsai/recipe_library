@@ -31,8 +31,18 @@ export interface RecipeDetail {
   macros_per_serving: { kcal: number | null; protein_g: number | null; carbs_g: number | null; fat_g: number | null } | null;
   macros_estimated: boolean;
   extraction_partial: boolean;
+  source_type: string;
   source_url: string;
   source_detail: string | null;
+  photo_path: string | null;
+}
+
+export interface IngestResult {
+  status: "saved" | "updated";
+  source: "web" | "youtube" | "photo";
+  recipeId: string;
+  title: string;
+  partial: boolean;
 }
 
 export interface SearchResult {
@@ -117,6 +127,8 @@ export const api = {
   recipes: () => req<RecipeSummary[]>("/api/recipes"),
   recipe: (id: string) => req<RecipeDetail>(`/api/recipes/${id}`),
   deleteRecipe: (id: string) => req(`/api/recipes/${id}`, { method: "DELETE" }),
+  ingestPhoto: (imageBase64: string, mediaType: string) =>
+    req<IngestResult>("/api/ingest-photo", { method: "POST", body: JSON.stringify({ imageBase64, mediaType }) }),
   tags: () => req<Tag[]>("/api/tags"),
   renameTag: (id: string, value: string) =>
     req(`/api/tags/${id}`, { method: "PATCH", body: JSON.stringify({ value }) }),

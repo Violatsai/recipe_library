@@ -1,14 +1,20 @@
 import { Router } from "express";
 import { z } from "zod";
+import { asyncHandler } from "../http.js";
 import { config } from "../config.js";
 import { NeedsHtmlError } from "../ingest/fetchPage.js";
-import { ingest } from "../ingest/pipeline.js";
+import { ingest, ingestPhoto, NotARecipeError } from "../ingest/pipeline.js";
 
 export const ingestRouter = Router();
 
 const Body = z.object({
   url: z.string().url(),
   html: z.string().optional(),
+});
+
+const PhotoBody = z.object({
+  imageBase64: z.string(),
+  mediaType: z.enum(["image/jpeg", "image/png", "image/webp", "image/gif"]),
 });
 
 ingestRouter.post("/ingest", async (req, res) => {
@@ -36,3 +42,25 @@ ingestRouter.post("/ingest", async (req, res) => {
     res.status(500).json({ error: err instanceof Error ? err.message : "ingest failed" });
   }
 });
+
+// No x-api-key gate: called from the local web UI (Library tab), not the
+// extension — same trust level as the other web-facing routes in recipes.ts.
+ingestRouter.post(
+  "/ingest-photo",
+  asyncHandler(async (req, res) => {
+    const parsed = PhotoBody.safeParse(req.body);
+    if (!parsed.success) {
+      res.status(400).json({ error: parsed.error.issues.map((i) => i.message).join("; ") });
+      return;
+    }
+    try {
+      res.json(await ingestPhoto(parsed.data));
+    } catch (err) {
+      if (err instanceof NotARecipeError) {
+        res.status(422).json({ error: err.message });
+        return;
+      }
+      res.status(500).json({ error: err instanceof Error ? err.message : "ingest failed" });
+    }
+  }),
+);

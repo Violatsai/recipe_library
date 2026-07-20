@@ -1,11 +1,24 @@
+import { createHash } from "node:crypto";
+import { mkdir, writeFile } from "node:fs/promises";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { query, withTransaction } from "../db.js";
 import { embedText, toVectorLiteral } from "./embed.js";
-import { enrich, type ApprovedTags, type EnrichmentData } from "./enrich.js";
+import { enrich, enrichFromImage, type ApprovedTags, type EnrichmentData } from "./enrich.js";
 import { fetchPage, NeedsHtmlError } from "./fetchPage.js";
 import { extractRecipeJsonLd } from "./jsonld.js";
 import { detectSource, normalizeUrl, youtubeVideoId } from "./normalizeUrl.js";
 import { extractReadable } from "./readable.js";
 import { findRecipeLink, getTranscript, getVideoMeta } from "./youtube.js";
+
+const UPLOADS_DIR = path.resolve(fileURLToPath(import.meta.url), "../../../uploads");
+
+/** Thrown when a photo doesn't contain an extractable recipe (no ingredients, no steps). */
+export class NotARecipeError extends Error {
+  constructor() {
+    super("no recipe could be extracted from this photo");
+  }
+}
 
 /**
  * Ingestion orchestrator. Both source types funnel into one shared
@@ -28,9 +41,14 @@ export interface IngestInput {
   html?: string;
 }
 
+export interface IngestPhotoInput {
+  imageBase64: string;
+  mediaType: "image/jpeg" | "image/png" | "image/webp" | "image/gif";
+}
+
 export interface IngestResult {
   status: "saved" | "updated";
-  source: "web" | "youtube";
+  source: "web" | "youtube" | "photo";
   normalizedUrl: string;
   recipeId: string;
   title: string;
@@ -50,7 +68,7 @@ async function fetchApprovedTags(): Promise<ApprovedTags> {
   return out;
 }
 
-function buildEmbedString(d: EnrichmentData): string {
+export function buildEmbedString(d: EnrichmentData): string {
   const defs = d.defining_ingredients.join(", ");
   const tagParts = [
     ...d.tags.cuisine.map((v) => `Cuisine: ${v}`),
@@ -72,17 +90,18 @@ function pageContent(html: string, url: string): string {
   return `Source URL: ${url}\n\nArticle title: ${r.title}\n\nArticle text:\n${r.textContent}`;
 }
 
-/** Shared core: enrich → embed → transactional upsert.
- *  `resolveSourceDetail` runs after enrichment so callers can set provenance
+/** Shared core: embed → transactional upsert, given already-enriched data.
+ *  `resolveSourceDetail` runs on the result so callers can set provenance
  *  from the result (e.g. which source Claude actually used). */
-async function enrichAndPersist(args: {
+async function persist(args: {
   normalizedUrl: string;
-  source: "web" | "youtube";
+  source: "web" | "youtube" | "photo";
   resolveSourceDetail: (data: EnrichmentData) => string | null;
-  userContent: string;
+  data: EnrichmentData;
+  description: string;
+  photoPath?: string | null;
 }): Promise<IngestResult> {
-  const approvedTags = await fetchApprovedTags();
-  const data = await enrich({ approvedTags, userContent: args.userContent });
+  const data = args.data;
   const sourceDetail = args.resolveSourceDetail(data);
   const vector = await embedText(buildEmbedString(data), "document");
   const embLiteral = toVectorLiteral(vector);
@@ -93,8 +112,8 @@ async function enrichAndPersist(args: {
       `INSERT INTO recipes
          (title, source_url, source_type, source_detail, servings, total_time_min,
           steps, description, kcal, protein_g, carbs_g, fat_g,
-          embedding, extraction_partial, updated_at)
-       VALUES ($1,$2,$3,$4,$5,$6,$7::jsonb,$8,$9,$10,$11,$12,$13::vector,$14, now())
+          embedding, extraction_partial, photo_path, updated_at)
+       VALUES ($1,$2,$3,$4,$5,$6,$7::jsonb,$8,$9,$10,$11,$12,$13::vector,$14,$15, now())
        ON CONFLICT (source_url) DO UPDATE SET
          title=EXCLUDED.title, source_type=EXCLUDED.source_type,
          source_detail=EXCLUDED.source_detail, servings=EXCLUDED.servings,
@@ -102,7 +121,7 @@ async function enrichAndPersist(args: {
          description=EXCLUDED.description, kcal=EXCLUDED.kcal,
          protein_g=EXCLUDED.protein_g, carbs_g=EXCLUDED.carbs_g, fat_g=EXCLUDED.fat_g,
          embedding=EXCLUDED.embedding, extraction_partial=EXCLUDED.extraction_partial,
-         updated_at=now()
+         photo_path=EXCLUDED.photo_path, updated_at=now()
        RETURNING id, (xmax::text = '0') AS inserted`,
       [
         data.title,
@@ -112,13 +131,14 @@ async function enrichAndPersist(args: {
         data.servings,
         data.total_time_min,
         JSON.stringify(data.steps),
-        args.userContent, // description = raw captured content, for re-extraction
+        args.description,
         macros?.kcal ?? null,
         macros?.protein_g ?? null,
         macros?.carbs_g ?? null,
         macros?.fat_g ?? null,
         embLiteral,
         data.partial,
+        args.photoPath ?? null,
       ],
     );
     const row = upsert.rows[0]!;
@@ -170,6 +190,24 @@ async function enrichAndPersist(args: {
     title: data.title,
     partial: data.partial,
   };
+}
+
+/** Text-source convenience wrapper: enrich from text, then persist. */
+async function enrichAndPersist(args: {
+  normalizedUrl: string;
+  source: "web" | "youtube";
+  resolveSourceDetail: (data: EnrichmentData) => string | null;
+  userContent: string;
+}): Promise<IngestResult> {
+  const approvedTags = await fetchApprovedTags();
+  const data = await enrich({ approvedTags, userContent: args.userContent });
+  return persist({
+    normalizedUrl: args.normalizedUrl,
+    source: args.source,
+    resolveSourceDetail: args.resolveSourceDetail,
+    data,
+    description: args.userContent, // description = raw captured content, for re-extraction
+  });
 }
 
 async function ingestWeb(input: IngestInput, normalizedUrl: string): Promise<IngestResult> {
@@ -253,4 +291,40 @@ export async function ingest(input: IngestInput): Promise<IngestResult> {
   const normalizedUrl = normalizeUrl(input.url);
   const source = detectSource(input.url);
   return source === "youtube" ? ingestYouTube(normalizedUrl) : ingestWeb(input, normalizedUrl);
+}
+
+const MEDIA_TYPE_EXT: Record<IngestPhotoInput["mediaType"], string> = {
+  "image/jpeg": "jpg",
+  "image/png": "png",
+  "image/webp": "webp",
+  "image/gif": "gif",
+};
+
+/** Photo-source: content-hash dedup (re-uploading the same photo updates in
+ *  place, same as re-saving a URL), vision enrichment, persist the image
+ *  alongside the recipe row. */
+export async function ingestPhoto(input: IngestPhotoInput): Promise<IngestResult> {
+  const bytes = Buffer.from(input.imageBase64, "base64");
+  const hash = createHash("sha256").update(bytes).digest("hex");
+  const normalizedUrl = `photo:${hash}`;
+
+  const approvedTags = await fetchApprovedTags();
+  const data = await enrichFromImage({ approvedTags, imageBase64: input.imageBase64, mediaType: input.mediaType });
+  if (data.ingredients.length === 0 && data.steps.length === 0) {
+    throw new NotARecipeError();
+  }
+
+  const ext = MEDIA_TYPE_EXT[input.mediaType];
+  const filename = `${hash}.${ext}`;
+  await mkdir(UPLOADS_DIR, { recursive: true });
+  await writeFile(path.join(UPLOADS_DIR, filename), bytes);
+
+  return persist({
+    normalizedUrl,
+    source: "photo",
+    resolveSourceDetail: () => null,
+    data,
+    description: `Photo-extracted recipe (${filename})`,
+    photoPath: filename,
+  });
 }

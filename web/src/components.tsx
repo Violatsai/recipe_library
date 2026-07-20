@@ -120,6 +120,13 @@ export function RecipeDetailView({ detail }: { detail: RecipeDetail }) {
           </>
         )}
       </div>
+      {detail.source_type === "photo" && detail.photo_path && (
+        <img
+          className="detail-photo"
+          src={`/uploads/${detail.photo_path}`}
+          alt={detail.title}
+        />
+      )}
       <div className="detail-cols">
         <div>
           <h4>Ingredients</h4>
@@ -149,15 +156,25 @@ export function RecipeDetailView({ detail }: { detail: RecipeDetail }) {
         </div>
       </div>
       <p style={{ marginBottom: 0 }}>
-        <a className="src-link" href={detail.source_url} target="_blank" rel="noreferrer">
-          View original source ↗
-        </a>
-        {detail.source_detail && (
-          <>
-            {" · "}
-            <a className="src-link" href={detail.source_detail} target="_blank" rel="noreferrer">
-              recipe page ↗
+        {detail.source_type === "photo" ? (
+          detail.photo_path && (
+            <a className="src-link" href={`/uploads/${detail.photo_path}`} target="_blank" rel="noreferrer">
+              View original photo ↗
             </a>
+          )
+        ) : (
+          <>
+            <a className="src-link" href={detail.source_url} target="_blank" rel="noreferrer">
+              View original source ↗
+            </a>
+            {detail.source_detail && (
+              <>
+                {" · "}
+                <a className="src-link" href={detail.source_detail} target="_blank" rel="noreferrer">
+                  recipe page ↗
+                </a>
+              </>
+            )}
           </>
         )}
       </p>

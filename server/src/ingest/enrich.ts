@@ -68,11 +68,8 @@ export interface EnrichContext {
   userContent: string;
 }
 
-function systemPrompt(vocab: ApprovedTags): string {
-  return `You extract structured recipe data from a source — either a schema.org Recipe JSON object or article/transcript text — and return it in the required format.
-
-Rules:
-- title, servings, total_time_min, and ordered steps.
+function SHARED_RULES(vocab: ApprovedTags): string {
+  return `- title, servings, total_time_min, and ordered steps.
 - Recipes may be in ANY language. Regardless of source language: ingredients "name" and defining_ingredients are ALWAYS normalized lowercase ENGLISH (translate; keep culturally specific items romanized, e.g. "doubanjiang", "miso"); "raw_text" stays VERBATIM in the source language. For non-English sources, write each step in the source language followed by an English translation in parentheses. Parse quantities from source-language units (e.g. 半茶匙 → 0.5 tsp).
 - title: the PLAIN DISH NAME only. Strip channel/series/creator names, publication or video branding, episode markers, and decorations like "…做法" or a trailing "Recipe". Use the name an English-speaking cook would naturally call the dish — often the romanized native name itself ("Pad Thai", "Carbonara"). If the source title is in a NON-LATIN script, give the original dish name (decorations stripped) followed by the English name in parentheses, e.g. 茄香四季豆 (Tomato-Scented Green Beans). Only simplify clear redundancy or branding; never reword genuinely descriptive titles.
 - ingredients: "name" is the normalized lowercase ingredient (e.g. "garlic"); parse "quantity" and "unit" when present (null when there is none, e.g. "a pinch"); "raw_text" is the original line, verbatim.
@@ -89,6 +86,28 @@ dish_type: ${vocab.dish_type.join(", ")}
 dietary: ${vocab.dietary.join(", ")}`;
 }
 
+function systemPrompt(vocab: ApprovedTags): string {
+  return `You extract structured recipe data from a source — either a schema.org Recipe JSON object or article/transcript text — and return it in the required format.
+
+Rules:
+${SHARED_RULES(vocab)}`;
+}
+
+function imageSystemPrompt(vocab: ApprovedTags): string {
+  return `You extract structured recipe data from a PHOTO of a recipe — a cookbook page, handwritten card, printed clipping, or a screenshot — and return it in the required format.
+
+Rules:
+${SHARED_RULES(vocab)}
+- Read the image carefully, including handwriting, stylized fonts, and text at an angle or partially obscured. If part of the image is illegible, do your best from context (e.g. typical proportions for that dish) rather than leaving a field empty, but set partial: true if entire sections (all ingredients, or all steps) are unreadable.
+- If the photo shows more than one distinct recipe, extract only the most prominent/complete one.`;
+}
+
+export interface EnrichImageContext {
+  approvedTags: ApprovedTags;
+  imageBase64: string;
+  mediaType: "image/jpeg" | "image/png" | "image/webp" | "image/gif";
+}
+
 export async function enrich(ctx: EnrichContext): Promise<EnrichmentData> {
   const client = new Anthropic({ apiKey: config.anthropicApiKey });
   const message = await client.messages.parse({
@@ -96,6 +115,35 @@ export async function enrich(ctx: EnrichContext): Promise<EnrichmentData> {
     max_tokens: 8192,
     system: systemPrompt(ctx.approvedTags),
     messages: [{ role: "user", content: ctx.userContent }],
+    output_config: { format: zodOutputFormat(Enrichment) },
+  });
+  if (!message.parsed_output) {
+    throw new Error(`enrichment produced no parseable output (stop_reason: ${message.stop_reason})`);
+  }
+  return message.parsed_output;
+}
+
+export async function enrichFromImage(ctx: EnrichImageContext): Promise<EnrichmentData> {
+  const client = new Anthropic({ apiKey: config.anthropicApiKey });
+  const message = await client.messages.parse({
+    model: "claude-sonnet-5",
+    max_tokens: 8192,
+    system: imageSystemPrompt(ctx.approvedTags),
+    messages: [
+      {
+        role: "user",
+        content: [
+          {
+            type: "image",
+            source: { type: "base64", media_type: ctx.mediaType, data: ctx.imageBase64 },
+          },
+          {
+            type: "text",
+            text: "Extract the recipe from this photo.",
+          },
+        ],
+      },
+    ],
     output_config: { format: zodOutputFormat(Enrichment) },
   });
   if (!message.parsed_output) {

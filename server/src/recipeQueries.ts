@@ -29,8 +29,10 @@ export interface RecipeDetail {
   macros_per_serving: { kcal: number | null; protein_g: number | null; carbs_g: number | null; fat_g: number | null } | null;
   macros_estimated: boolean;
   extraction_partial: boolean;
+  source_type: string;
   source_url: string;
   source_detail: string | null;
+  photo_path: string | null;
 }
 
 export async function listRecipes(): Promise<RecipeSummary[]> {
@@ -88,11 +90,13 @@ export async function fetchRecipeDetail(id: string): Promise<RecipeDetail | null
       fat_g: number | null;
       macros_estimated: boolean;
       extraction_partial: boolean;
+      source_type: string;
       source_url: string;
       source_detail: string | null;
+      photo_path: string | null;
     }>(
       `SELECT id, title, servings, total_time_min, steps, kcal, protein_g, carbs_g, fat_g,
-              macros_estimated, extraction_partial, source_url, source_detail
+              macros_estimated, extraction_partial, source_type, source_url, source_detail, photo_path
          FROM recipes WHERE id = $1`,
       [id],
     )
@@ -127,7 +131,9 @@ export async function fetchRecipeDetail(id: string): Promise<RecipeDetail | null
         : { kcal: r.kcal, protein_g: r.protein_g, carbs_g: r.carbs_g, fat_g: r.fat_g },
     macros_estimated: r.macros_estimated,
     extraction_partial: r.extraction_partial,
+    source_type: r.source_type,
     source_url: r.source_url,
     source_detail: r.source_detail,
+    photo_path: r.photo_path,
   };
 }
