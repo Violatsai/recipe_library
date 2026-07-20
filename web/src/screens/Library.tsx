@@ -23,6 +23,7 @@ export function Library({ active }: { active: boolean }) {
   const [activeTags, setActiveTags] = useState<Set<string>>(new Set()); // "category:value"
   const [uploading, setUploading] = useState(false);
   const [uploadError, setUploadError] = useState<string | null>(null);
+  const [uploadNotice, setUploadNotice] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const load = () => {
@@ -83,12 +84,18 @@ export function Library({ active }: { active: boolean }) {
     }
     setUploading(true);
     setUploadError(null);
+    setUploadNotice(null);
     try {
       const imageBase64 = await fileToBase64(file);
-      const result = await api.ingestPhoto(imageBase64, file.type);
+      const results = await api.ingestPhoto(imageBase64, file.type);
       load();
-      const d = await api.recipe(result.recipeId);
-      setDetail(d);
+      if (results.length === 1) {
+        const d = await api.recipe(results[0]!.recipeId);
+        setDetail(d);
+      } else {
+        // multiple recipes on one photo — stay on the grid, all new cards land at the top
+        setUploadNotice(`Saved ${results.length} recipes from this photo: ${results.map((r) => r.title).join(", ")}`);
+      }
     } catch (err) {
       setUploadError(err instanceof Error ? err.message : "photo import failed");
     } finally {
@@ -155,6 +162,11 @@ export function Library({ active }: { active: boolean }) {
         {uploadError && (
           <div className="upload-error">
             {uploadError} <button className="link-btn" onClick={() => setUploadError(null)}>dismiss</button>
+          </div>
+        )}
+        {uploadNotice && (
+          <div className="upload-notice">
+            {uploadNotice} <button className="link-btn" onClick={() => setUploadNotice(null)}>dismiss</button>
           </div>
         )}
         <div className="filter-row">

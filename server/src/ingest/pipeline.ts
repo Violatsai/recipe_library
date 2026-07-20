@@ -302,15 +302,19 @@ const MEDIA_TYPE_EXT: Record<IngestPhotoInput["mediaType"], string> = {
 
 /** Photo-source: content-hash dedup (re-uploading the same photo updates in
  *  place, same as re-saving a URL), vision enrichment, persist the image
- *  alongside the recipe row. */
-export async function ingestPhoto(input: IngestPhotoInput): Promise<IngestResult> {
+ *  alongside the recipe row(s) — a photo may contain more than one recipe
+ *  (e.g. two recipes on one cookbook page), each becomes its own row sharing
+ *  the same saved photo. Single-recipe photos keep the plain `photo:<hash>`
+ *  key so re-uploading them still updates in place; once a photo yields more
+ *  than one recipe each row gets a `#<index>` suffix to stay unique. */
+export async function ingestPhoto(input: IngestPhotoInput): Promise<IngestResult[]> {
   const bytes = Buffer.from(input.imageBase64, "base64");
   const hash = createHash("sha256").update(bytes).digest("hex");
-  const normalizedUrl = `photo:${hash}`;
 
   const approvedTags = await fetchApprovedTags();
-  const data = await enrichFromImage({ approvedTags, imageBase64: input.imageBase64, mediaType: input.mediaType });
-  if (data.ingredients.length === 0 && data.steps.length === 0) {
+  const recipes = await enrichFromImage({ approvedTags, imageBase64: input.imageBase64, mediaType: input.mediaType });
+  const usable = recipes.filter((d) => d.ingredients.length > 0 || d.steps.length > 0);
+  if (usable.length === 0) {
     throw new NotARecipeError();
   }
 
@@ -319,12 +323,20 @@ export async function ingestPhoto(input: IngestPhotoInput): Promise<IngestResult
   await mkdir(UPLOADS_DIR, { recursive: true });
   await writeFile(path.join(UPLOADS_DIR, filename), bytes);
 
-  return persist({
-    normalizedUrl,
-    source: "photo",
-    resolveSourceDetail: () => null,
-    data,
-    description: `Photo-extracted recipe (${filename})`,
-    photoPath: filename,
-  });
+  const results: IngestResult[] = [];
+  for (let i = 0; i < usable.length; i++) {
+    const data = usable[i]!;
+    const normalizedUrl = usable.length === 1 ? `photo:${hash}` : `photo:${hash}#${i}`;
+    results.push(
+      await persist({
+        normalizedUrl,
+        source: "photo",
+        resolveSourceDetail: () => null,
+        data,
+        description: `Photo-extracted recipe (${filename})`,
+        photoPath: filename,
+      }),
+    );
+  }
+  return results;
 }

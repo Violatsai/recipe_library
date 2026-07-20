@@ -94,13 +94,17 @@ ${SHARED_RULES(vocab)}`;
 }
 
 function imageSystemPrompt(vocab: ApprovedTags): string {
-  return `You extract structured recipe data from a PHOTO of a recipe — a cookbook page, handwritten card, printed clipping, or a screenshot — and return it in the required format.
+  return `You extract structured recipe data from a PHOTO of one or more recipes — a cookbook page, handwritten card, printed clipping, or a screenshot — and return each recipe you find in the required format.
 
 Rules:
 ${SHARED_RULES(vocab)}
 - Read the image carefully, including handwriting, stylized fonts, and text at an angle or partially obscured. If part of the image is illegible, do your best from context (e.g. typical proportions for that dish) rather than leaving a field empty, but set partial: true if entire sections (all ingredients, or all steps) are unreadable.
-- If the photo shows more than one distinct recipe, extract only the most prominent/complete one.`;
+- The photo may show ONE recipe or SEVERAL distinct recipes (e.g. two recipes on the same cookbook page). Extract EVERY distinct recipe visible as a separate entry in the "recipes" array — do not merge them and do not drop any for being less prominent. A recipe's photo/illustration on the page is not itself a recipe to extract.`;
 }
+
+const EnrichmentList = z.object({
+  recipes: z.array(Enrichment),
+});
 
 export interface EnrichImageContext {
   approvedTags: ApprovedTags;
@@ -123,7 +127,8 @@ export async function enrich(ctx: EnrichContext): Promise<EnrichmentData> {
   return message.parsed_output;
 }
 
-export async function enrichFromImage(ctx: EnrichImageContext): Promise<EnrichmentData> {
+/** Returns one entry per distinct recipe found in the photo (usually one). */
+export async function enrichFromImage(ctx: EnrichImageContext): Promise<EnrichmentData[]> {
   const client = new Anthropic({ apiKey: config.anthropicApiKey });
   const message = await client.messages.parse({
     model: "claude-sonnet-5",
@@ -139,15 +144,15 @@ export async function enrichFromImage(ctx: EnrichImageContext): Promise<Enrichme
           },
           {
             type: "text",
-            text: "Extract the recipe from this photo.",
+            text: "Extract every recipe from this photo.",
           },
         ],
       },
     ],
-    output_config: { format: zodOutputFormat(Enrichment) },
+    output_config: { format: zodOutputFormat(EnrichmentList) },
   });
   if (!message.parsed_output) {
     throw new Error(`enrichment produced no parseable output (stop_reason: ${message.stop_reason})`);
   }
-  return message.parsed_output;
+  return message.parsed_output.recipes;
 }

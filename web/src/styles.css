@@ -195,6 +195,10 @@ td.num, .num { font-variant-numeric: tabular-nums; }
   color: #B03A2E; background: var(--flag-soft); border: 1px solid #B03A2E;
   border-radius: 8px; padding: 8px 12px; font-size: 13px; display: flex; gap: 10px; align-items: center;
 }
+.upload-notice {
+  color: var(--accent); background: var(--accent-soft); border: 1px solid var(--accent);
+  border-radius: 8px; padding: 8px 12px; font-size: 13px; display: flex; gap: 10px; align-items: center;
+}
 .filter-row { display: flex; flex-wrap: wrap; gap: 6px; }
 .filter-chip {
   border: 1px solid var(--line); background: var(--panel); color: var(--muted);

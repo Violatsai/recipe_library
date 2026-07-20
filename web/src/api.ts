@@ -128,7 +128,7 @@ export const api = {
   recipe: (id: string) => req<RecipeDetail>(`/api/recipes/${id}`),
   deleteRecipe: (id: string) => req(`/api/recipes/${id}`, { method: "DELETE" }),
   ingestPhoto: (imageBase64: string, mediaType: string) =>
-    req<IngestResult>("/api/ingest-photo", { method: "POST", body: JSON.stringify({ imageBase64, mediaType }) }),
+    req<IngestResult[]>("/api/ingest-photo", { method: "POST", body: JSON.stringify({ imageBase64, mediaType }) }),
   tags: () => req<Tag[]>("/api/tags"),
   renameTag: (id: string, value: string) =>
     req(`/api/tags/${id}`, { method: "PATCH", body: JSON.stringify({ value }) }),
