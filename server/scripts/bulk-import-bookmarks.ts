@@ -18,7 +18,9 @@ import { pool } from "../src/db.js";
  *   npx tsx server/scripts/bulk-import-bookmarks.ts <bookmarks.html> "<Folder Name>" [--dry-run] [--limit N]
  *
  *   --dry-run   list the URLs that would be imported, without ingesting
- *   --limit N   only process the first N URLs (useful for a test run)
+ *   --limit N   only process N URLs (after --skip), for a test run
+ *   --skip N    skip the first N URLs — resume a batch without re-processing
+ *               (and re-spending API calls on) items already done
  */
 
 const DELAY_MS = 1500; // be polite to source sites between fetches
@@ -57,7 +59,11 @@ async function main(): Promise<void> {
   const dryRun = args.includes("--dry-run");
   const limitIdx = args.indexOf("--limit");
   const limit = limitIdx !== -1 ? Number(args[limitIdx + 1]) : undefined;
-  const positional = args.filter((a, i) => !a.startsWith("--") && args[i - 1] !== "--limit");
+  const skipIdx = args.indexOf("--skip");
+  const skip = skipIdx !== -1 ? Number(args[skipIdx + 1]) : 0;
+  const positional = args.filter(
+    (a, i) => !a.startsWith("--") && args[i - 1] !== "--limit" && args[i - 1] !== "--skip",
+  );
   const [filePath, folderName] = positional;
 
   if (!filePath || !folderName) {
@@ -76,8 +82,10 @@ async function main(): Promise<void> {
     process.exit(1);
   }
 
-  const items = limit ? found.slice(0, limit) : found;
-  console.log(`Found ${found.length} bookmark(s) in "${folderName}"${limit ? ` (processing first ${limit})` : ""}.`);
+  const afterSkip = skip ? found.slice(skip) : found;
+  const items = limit ? afterSkip.slice(0, limit) : afterSkip;
+  const rangeNote = skip || limit ? ` (items ${skip + 1}–${skip + items.length} of ${found.length})` : "";
+  console.log(`Found ${found.length} bookmark(s) in "${folderName}"${rangeNote}.`);
 
   if (dryRun) {
     for (const b of items) console.log(`  ${b.url}  ${b.title ? `(${b.title})` : ""}`);
