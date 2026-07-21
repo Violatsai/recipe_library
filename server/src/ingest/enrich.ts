@@ -90,7 +90,8 @@ function systemPrompt(vocab: ApprovedTags): string {
   return `You extract structured recipe data from a source — either a schema.org Recipe JSON object or article/transcript text — and return it in the required format.
 
 Rules:
-${SHARED_RULES(vocab)}`;
+${SHARED_RULES(vocab)}
+- The source may describe ONE recipe or SEVERAL distinct recipes (e.g. a "5 recipes" roundup article, or a video that walks through multiple dishes). Extract EVERY distinct recipe as a separate entry in the "recipes" array — do not merge them and do not drop any for being shorter or less prominent.`;
 }
 
 function imageSystemPrompt(vocab: ApprovedTags): string {
@@ -112,19 +113,22 @@ export interface EnrichImageContext {
   mediaType: "image/jpeg" | "image/png" | "image/webp" | "image/gif";
 }
 
-export async function enrich(ctx: EnrichContext): Promise<EnrichmentData> {
+/** Returns one entry per distinct recipe found in the source (usually one). */
+export async function enrich(ctx: EnrichContext): Promise<EnrichmentData[]> {
   const client = new Anthropic({ apiKey: config.anthropicApiKey });
   const message = await client.messages.parse({
     model: "claude-sonnet-5",
-    max_tokens: 8192,
+    // Higher than a single recipe needs: a roundup article or multi-dish video
+    // can pack several recipes' worth of bilingual steps/ingredients into one response.
+    max_tokens: 16384,
     system: systemPrompt(ctx.approvedTags),
     messages: [{ role: "user", content: ctx.userContent }],
-    output_config: { format: zodOutputFormat(Enrichment) },
+    output_config: { format: zodOutputFormat(EnrichmentList) },
   });
   if (!message.parsed_output) {
     throw new Error(`enrichment produced no parseable output (stop_reason: ${message.stop_reason})`);
   }
-  return message.parsed_output;
+  return message.parsed_output.recipes;
 }
 
 /** Returns one entry per distinct recipe found in the photo (usually one). */

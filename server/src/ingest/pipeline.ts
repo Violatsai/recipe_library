@@ -192,25 +192,41 @@ async function persist(args: {
   };
 }
 
-/** Text-source convenience wrapper: enrich from text, then persist. */
+/** Text-source convenience wrapper: enrich from text, then persist one row
+ *  per distinct recipe found — a page or video may bundle several (e.g. a
+ *  roundup article, or a video that walks through multiple dishes). Same
+ *  single-vs-suffixed dedup key convention as photos: the common single-recipe
+ *  case keeps the plain normalizedUrl so re-saving still updates in place;
+ *  multi-recipe sources suffix each row with `#<index>`. */
 async function enrichAndPersist(args: {
   normalizedUrl: string;
   source: "web" | "youtube";
   resolveSourceDetail: (data: EnrichmentData) => string | null;
   userContent: string;
-}): Promise<IngestResult> {
+}): Promise<IngestResult[]> {
   const approvedTags = await fetchApprovedTags();
-  const data = await enrich({ approvedTags, userContent: args.userContent });
-  return persist({
-    normalizedUrl: args.normalizedUrl,
-    source: args.source,
-    resolveSourceDetail: args.resolveSourceDetail,
-    data,
-    description: args.userContent, // description = raw captured content, for re-extraction
-  });
+  const recipes = await enrich({ approvedTags, userContent: args.userContent });
+  const usable = recipes.filter((d) => d.ingredients.length > 0 || d.steps.length > 0);
+  const list = usable.length > 0 ? usable : recipes; // keep the original behavior of persisting a lone thin/partial extraction
+
+  const results: IngestResult[] = [];
+  for (let i = 0; i < list.length; i++) {
+    const data = list[i]!;
+    const normalizedUrl = list.length === 1 ? args.normalizedUrl : `${args.normalizedUrl}#${i}`;
+    results.push(
+      await persist({
+        normalizedUrl,
+        source: args.source,
+        resolveSourceDetail: args.resolveSourceDetail,
+        data,
+        description: args.userContent, // description = raw captured content, for re-extraction
+      }),
+    );
+  }
+  return results;
 }
 
-async function ingestWeb(input: IngestInput, normalizedUrl: string): Promise<IngestResult> {
+async function ingestWeb(input: IngestInput, normalizedUrl: string): Promise<IngestResult[]> {
   const html = await fetchPage(input.url, input.html); // may throw NeedsHtmlError → 422
   return enrichAndPersist({
     normalizedUrl,
@@ -220,7 +236,7 @@ async function ingestWeb(input: IngestInput, normalizedUrl: string): Promise<Ing
   });
 }
 
-async function ingestYouTube(normalizedUrl: string): Promise<IngestResult> {
+async function ingestYouTube(normalizedUrl: string): Promise<IngestResult[]> {
   const videoId = youtubeVideoId(normalizedUrl);
   if (!videoId) throw new Error(`could not extract a video id from ${normalizedUrl}`);
   const meta = await getVideoMeta(videoId);
@@ -287,7 +303,7 @@ async function ingestYouTube(normalizedUrl: string): Promise<IngestResult> {
   });
 }
 
-export async function ingest(input: IngestInput): Promise<IngestResult> {
+export async function ingest(input: IngestInput): Promise<IngestResult[]> {
   const normalizedUrl = normalizeUrl(input.url);
   const source = detectSource(input.url);
   return source === "youtube" ? ingestYouTube(normalizedUrl) : ingestWeb(input, normalizedUrl);

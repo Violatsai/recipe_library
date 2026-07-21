@@ -22,10 +22,13 @@ function setStatus(kind: "ok" | "err" | "busy" | "", text: string): void {
   statusEl.textContent = text;
 }
 
-interface IngestResponse {
-  status?: "saved" | "updated";
-  title?: string;
-  partial?: boolean;
+interface IngestResult {
+  status: "saved" | "updated";
+  title: string;
+  partial: boolean;
+}
+
+interface IngestError {
   error?: string;
 }
 
@@ -85,17 +88,27 @@ async function save(): Promise<void> {
       headers: { "content-type": "application/json", "x-api-key": settings.apiKey },
       body: JSON.stringify(body),
     });
-    const data = (await resp.json().catch(() => ({}))) as IngestResponse;
+    const data = (await resp.json().catch(() => ({}))) as IngestResult[] | IngestError;
 
     if (resp.status === 401) {
       setStatus("err", "Invalid API key — check settings.");
     } else if (!resp.ok) {
-      setStatus("err", data.error ?? `Server error (HTTP ${resp.status}).`);
-    } else if (data.status === "updated") {
-      setStatus("ok", `Updated ✓ ${data.title ?? ""} (already in library)`);
+      setStatus("err", (data as IngestError).error ?? `Server error (HTTP ${resp.status}).`);
     } else {
-      const partialNote = data.partial ? " — partial extraction, source was thin" : "";
-      setStatus("ok", `Saved ✓ ${data.title ?? ""}${partialNote}`);
+      const results = data as IngestResult[];
+      if (results.length === 1) {
+        const r = results[0]!;
+        const partialNote = r.partial ? " — partial extraction, source was thin" : "";
+        setStatus(
+          "ok",
+          r.status === "updated" ? `Updated ✓ ${r.title} (already in library)` : `Saved ✓ ${r.title}${partialNote}`,
+        );
+      } else {
+        const saved = results.filter((r) => r.status === "saved").length;
+        const updated = results.length - saved;
+        const counts = [saved && `${saved} saved`, updated && `${updated} updated`].filter(Boolean).join(", ");
+        setStatus("ok", `${results.length} recipes found ✓ (${counts}): ${results.map((r) => r.title).join(", ")}`);
+      }
     }
   } catch {
     setStatus("err", "Could not reach the server — is it running?");

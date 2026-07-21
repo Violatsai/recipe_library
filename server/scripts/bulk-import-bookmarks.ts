@@ -102,10 +102,15 @@ async function main(): Promise<void> {
     const b = items[i]!;
     process.stdout.write(`[${i + 1}/${items.length}] ${b.url} ... `);
     try {
-      const result = await ingest({ url: b.url });
-      if (result.status === "saved") saved++;
-      else updated++;
-      console.log(`${result.status} — ${result.title}${result.partial ? " (partial)" : ""}`);
+      const results = await ingest({ url: b.url });
+      for (const r of results) {
+        if (r.status === "saved") saved++;
+        else updated++;
+      }
+      const summary = results
+        .map((r) => `${r.status} — ${r.title}${r.partial ? " (partial)" : ""}`)
+        .join(" | ");
+      console.log(summary);
     } catch (err) {
       if (err instanceof NeedsHtmlError) {
         needsManual.push(b.url);
