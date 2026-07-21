@@ -8,6 +8,21 @@ import {
   type SearchResult,
 } from "./api";
 
+/** Groups ingredient rows that share the same source line (e.g. "sea salt &
+ *  black pepper" extracts to separate "salt" and "black pepper" rows) so the
+ *  line is displayed once, preserving first-appearance order. */
+function groupIngredientsByLine(
+  ingredients: { name: string; raw_text: string }[],
+): { rawText: string; names: string[] }[] {
+  const groups: { rawText: string; names: string[] }[] = [];
+  for (const ing of ingredients) {
+    const existing = groups.find((g) => g.rawText === ing.raw_text);
+    if (existing) existing.names.push(ing.name);
+    else groups.push({ rawText: ing.raw_text, names: [ing.name] });
+  }
+  return groups;
+}
+
 /** Modal overlay showing a full recipe — click a card/plan row anywhere to open. */
 export function RecipeOverlay({ recipeId, onClose }: { recipeId: string; onClose: () => void }) {
   const [detail, setDetail] = useState<RecipeDetail | null>(null);
@@ -131,16 +146,18 @@ export function RecipeDetailView({ detail }: { detail: RecipeDetail }) {
         <div>
           <h4>Ingredients</h4>
           <ul>
-            {detail.ingredients.map((i, idx) => {
-              // raw_text is verbatim source language; append the normalized
-              // English name only when it isn't already in the line — so
-              // non-English recipes read "大蒜 6瓣 (garlic)" while English
-              // recipes stay untouched. Mirrors the bilingual steps format.
-              const needsGloss = !i.raw_text.toLowerCase().includes(i.name.toLowerCase());
+            {groupIngredientsByLine(detail.ingredients).map((g, idx) => {
+              // raw_text is verbatim source language; append normalized English
+              // names not already present in the line — so non-English recipes
+              // read "大蒜 6瓣 (garlic)" while English recipes stay untouched.
+              // A single source line can name more than one ingredient (e.g.
+              // "sea salt & black pepper" extracts to two rows); group those
+              // back into one line instead of repeating it per ingredient.
+              const missingNames = g.names.filter((n) => !g.rawText.toLowerCase().includes(n.toLowerCase()));
               return (
                 <li key={idx}>
-                  {i.raw_text}
-                  {needsGloss && <span className="gloss"> ({i.name})</span>}
+                  {g.rawText}
+                  {missingNames.length > 0 && <span className="gloss"> ({missingNames.join(", ")})</span>}
                 </li>
               );
             })}
