@@ -132,7 +132,9 @@ export async function enrichFromImage(ctx: EnrichImageContext): Promise<Enrichme
   const client = new Anthropic({ apiKey: config.anthropicApiKey });
   const message = await client.messages.parse({
     model: "claude-sonnet-5",
-    max_tokens: 8192,
+    // Higher than the single-recipe text path's 8192: a photo can hold several
+    // recipes' worth of bilingual steps/ingredients in one response.
+    max_tokens: 16384,
     system: imageSystemPrompt(ctx.approvedTags),
     messages: [
       {
