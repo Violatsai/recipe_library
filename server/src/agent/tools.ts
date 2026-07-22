@@ -94,9 +94,63 @@ export function buildTools(events: ToolEvent[]): BetaRunnableTool<unknown>[] {
     async ({ id }) => (await fetchRecipeDetail(id)) ?? { error: "recipe not found" },
   );
 
+  const listMealPlans = record(
+    "list_meal_plans",
+    "List existing meal plans, most recent first, each with its recipe titles and whether it " +
+      "already has a saved grocery list. Chat history is text-only — meal_plan_id from an " +
+      "earlier turn is NOT remembered automatically. Call this FIRST whenever the user refers " +
+      "to a plan from earlier in the conversation (e.g. \"build the grocery list\", \"add " +
+      "another recipe to the plan\", \"what's in my plan\") and reuse the matching plan's id — " +
+      "do NOT call create_meal_plan again for a plan that already exists.",
+    z.object({ limit: z.number().int().optional().describe("max plans to return (default 5)") }),
+    async ({ limit }) => {
+      const plans = (
+        await query<{
+          id: string;
+          title: string;
+          start_date: string | null;
+          created_at: string;
+          latest_grocery_list_id: string | null;
+        }>(
+          `SELECT mp.id, mp.title, mp.start_date, mp.created_at,
+                  (SELECT gl.id FROM grocery_lists gl WHERE gl.meal_plan_id = mp.id
+                    ORDER BY gl.created_at DESC LIMIT 1) AS latest_grocery_list_id
+             FROM meal_plans mp
+             ORDER BY mp.created_at DESC
+             LIMIT $1`,
+          [limit ?? 5],
+        )
+      ).rows;
+      if (plans.length === 0) return [];
+      const recipeRows = (
+        await query<{ meal_plan_id: string; title: string }>(
+          `SELECT mpr.meal_plan_id, r.title
+             FROM meal_plan_recipes mpr JOIN recipes r ON r.id = mpr.recipe_id
+             WHERE mpr.meal_plan_id = ANY($1)`,
+          [plans.map((p) => p.id)],
+        )
+      ).rows;
+      const titlesByPlan = new Map<string, string[]>();
+      for (const r of recipeRows) {
+        const list = titlesByPlan.get(r.meal_plan_id) ?? [];
+        list.push(r.title);
+        titlesByPlan.set(r.meal_plan_id, list);
+      }
+      return plans.map((p) => ({
+        meal_plan_id: p.id,
+        title: p.title,
+        start_date: p.start_date,
+        recipes: titlesByPlan.get(p.id) ?? [],
+        has_grocery_list: p.latest_grocery_list_id != null,
+      }));
+    },
+  );
+
   const createMealPlan = record(
     "create_meal_plan",
-    "Create a new meal plan. Call once before adding recipes to it.",
+    "Create a new meal plan. Call once before adding recipes to it — but first call " +
+      "list_meal_plans if the user might be referring to one already discussed in this " +
+      "conversation, so you don't create a duplicate.",
     z.object({
       title: z.string(),
       start_date: z.string().nullable().optional().describe("ISO date (YYYY-MM-DD) or null"),
@@ -255,6 +309,7 @@ export function buildTools(events: ToolEvent[]): BetaRunnableTool<unknown>[] {
   return [
     searchRecipes,
     getRecipe,
+    listMealPlans,
     createMealPlan,
     addRecipeToPlan,
     generateGroceryList,
