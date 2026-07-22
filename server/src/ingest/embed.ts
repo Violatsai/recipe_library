@@ -16,7 +16,11 @@ function getClient(): VoyageAIClient {
   return client;
 }
 
-const RETRY_DELAYS_MS = [10_000, 20_000]; // Voyage free tier w/o payment method = 3 RPM
+// Voyage free tier w/o payment method = 3 RPM / 10K TPM — easy to exhaust with
+// multi-recipe ingests (several embed calls back-to-back) or after a burst of
+// activity. 30s of retry budget wasn't enough to ride out a busy window;
+// give it several minutes before actually failing the ingest.
+const RETRY_DELAYS_MS = [10_000, 20_000, 30_000, 45_000, 60_000, 60_000];
 
 function isRateLimit(err: unknown): boolean {
   const status = (err as { statusCode?: number })?.statusCode;
