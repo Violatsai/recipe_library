@@ -40,14 +40,24 @@ async function activeTab(): Promise<chrome.tabs.Tab | undefined> {
 /** Runs in the page's own context via chrome.scripting.executeScript, so it
  *  must be fully self-contained (no closures over outer-scope variables).
  *
- *  Two problems this solves, both confirmed live against real posts:
+ *  Three problems this solves, all confirmed live against real posts:
  *   1. These apps hydrate the actual post content asynchronously — the DOM
  *      right after navigation is just nav chrome (sidebar, "Messages"
  *      widget) with no post text at all. Capturing HTML at that point
  *      produces an empty extraction. So: poll the primary content container
  *      until it has a meaningful amount of text (or a timeout elapses)
  *      before doing anything else.
- *   2. Facebook (and sometimes Instagram) collapse long captions behind a
+ *   2. Browsing from one post straight to another in the SAME tab (e.g.
+ *      pasting a new URL over an already-loaded post) can leave the
+ *      PREVIOUS post's content sitting in the DOM while the new one is
+ *      still loading — that content is long enough to pass check #1 even
+ *      though it's the wrong post entirely (confirmed live: saved a second
+ *      post under its own correct URL, but with the previous post's title
+ *      and ingredients). So: also cross-check that <link rel="canonical">
+ *      / <meta property="og:url"> — which these platforms update on client-
+ *      side navigation — actually reference the current URL's post id
+ *      before trusting the content is caught up.
+ *   3. Facebook (and sometimes Instagram) collapse long captions behind a
  *      "see more"/"查看更多" toggle whose text isn't in the DOM until
  *      clicked. So: once content has loaded, click any such toggle.
  */
@@ -57,10 +67,31 @@ async function expandCaptionsInPage(): Promise<void> {
   const primaryContainer = (): Element =>
     document.querySelector("article") ?? document.querySelector("main") ?? document.body;
 
-  // Wait for real content, not just the loading shell. 400 chars comfortably
+  // The last non-empty path segment is the post/reel id on every URL form
+  // these hosts use (/p/<id>, /reel/<id>, /reels/<id>, /share/r/<id>).
+  const currentPostId = (): string | null => {
+    const segs = location.pathname.split("/").filter(Boolean);
+    return segs[segs.length - 1] ?? null;
+  };
+
+  const metaMatchesCurrentUrl = (): boolean => {
+    const id = currentPostId();
+    if (!id) return true; // nothing to cross-check — don't block on this signal
+    const canonical = document.querySelector<HTMLLinkElement>('link[rel="canonical"]')?.href ?? "";
+    const ogUrl = document.querySelector<HTMLMetaElement>('meta[property="og:url"]')?.content ?? "";
+    if (!canonical && !ogUrl) return true; // no meta tags present — don't block
+    return canonical.includes(id) || ogUrl.includes(id);
+  };
+
+  // Wait for real, CURRENT content — not just the loading shell (too little
+  // text), and not stale content left over from a previous post on the same
+  // tab (enough text, but the id doesn't match). 400 chars comfortably
   // exceeds typical nav/chrome text but is well under a real caption.
   const start = Date.now();
-  while ((primaryContainer().textContent ?? "").trim().length < 400 && Date.now() - start < 8000) {
+  while (
+    ((primaryContainer().textContent ?? "").trim().length < 400 || !metaMatchesCurrentUrl()) &&
+    Date.now() - start < 8000
+  ) {
     await sleep(300);
   }
 
