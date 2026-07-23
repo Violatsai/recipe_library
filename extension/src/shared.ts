@@ -24,3 +24,16 @@ export function isYouTube(url: string): boolean {
     return false;
   }
 }
+
+/** Facebook/Instagram/Threads collapse long captions behind a "see more"
+ *  toggle that isn't in the DOM's text until clicked — these hosts need the
+ *  expand step before HTML capture. */
+export function isSocialCaptionSite(url: string): boolean {
+  try {
+    const h = new URL(url).hostname.toLowerCase();
+    const bases = ["facebook.com", "instagram.com", "threads.net", "threads.com"];
+    return bases.some((b) => h === b || h.endsWith(`.${b}`));
+  } catch {
+    return false;
+  }
+}

@@ -1,4 +1,4 @@
-import { getSettings, isYouTube } from "./shared.js";
+import { getSettings, isSocialCaptionSite, isYouTube } from "./shared.js";
 
 /**
  * Popup save flow:
@@ -37,6 +37,50 @@ async function activeTab(): Promise<chrome.tabs.Tab | undefined> {
   return tab;
 }
 
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+/** Clicks any "see more"/"查看更多"-style caption toggles in the page. Runs
+ *  in the page's own context via chrome.scripting.executeScript, so it must
+ *  be fully self-contained (no closures over outer-scope variables). Facebook
+ *  in particular collapses long captions behind one of these — the text isn't
+ *  in the DOM until it's clicked, so HTML captured before this step would
+ *  only see the truncated caption. */
+function expandCaptionsInPage(): void {
+  // Deliberately excludes bare "more"/"更多" — Instagram's own sidebar has a
+  // nav item literally labeled "More" that a plain substring/exact match on
+  // just "more" collides with (confirmed live: it opened the settings menu
+  // instead of expanding a caption). Only match phrases specific enough to
+  // caption toggles that real site nav wouldn't also use verbatim.
+  const EXPAND_LABELS = ["see more", "...more", "… more", "查看更多", "顯示更多", "もっと見る", "続きを読む"];
+  const candidates = Array.from(document.querySelectorAll<HTMLElement>("span, div[role='button'], a"));
+  for (const el of candidates) {
+    const ownText = Array.from(el.childNodes)
+      .filter((n) => n.nodeType === Node.TEXT_NODE)
+      .map((n) => n.textContent ?? "")
+      .join("")
+      .trim()
+      .toLowerCase();
+    if (!EXPAND_LABELS.includes(ownText)) continue;
+    // skip real navigation links — the toggle is always a JS-driven span/button
+    if (el.tagName === "A" && (el as HTMLAnchorElement).href) continue;
+    // skip anything inside site chrome (nav/menu/dialog) — caption toggles
+    // live inside the post body, never inside navigation or a popup menu
+    if (el.closest("nav, [role='navigation'], [role='menu'], [role='dialog']")) continue;
+    el.click();
+  }
+}
+
+async function expandCaptions(tabId: number): Promise<void> {
+  // Several passes: some UIs re-render after the first click and reveal a
+  // second toggle (e.g. a longer caption that expands in stages), and on a
+  // freshly-loaded tab the caption node itself can take a couple of seconds
+  // to render — a single quick pass can run before it exists at all.
+  for (let i = 0; i < 3; i++) {
+    await chrome.scripting.executeScript({ target: { tabId }, func: expandCaptionsInPage });
+    await sleep(600);
+  }
+}
+
 async function capturePageHtml(tabId: number): Promise<string> {
   const results = await chrome.scripting.executeScript({
     target: { tabId },
@@ -73,9 +117,12 @@ async function save(): Promise<void> {
 
   let body: { url: string; html?: string };
   try {
-    body = isYouTube(tab.url)
-      ? { url: tab.url }
-      : { url: tab.url, html: await capturePageHtml(tab.id) };
+    if (isYouTube(tab.url)) {
+      body = { url: tab.url };
+    } else {
+      if (isSocialCaptionSite(tab.url)) await expandCaptions(tab.id);
+      body = { url: tab.url, html: await capturePageHtml(tab.id) };
+    }
   } catch (err) {
     setStatus("err", `Couldn't read the page: ${err instanceof Error ? err.message : err}`);
     saveBtn.disabled = false;
