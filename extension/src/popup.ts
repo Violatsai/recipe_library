@@ -37,48 +37,64 @@ async function activeTab(): Promise<chrome.tabs.Tab | undefined> {
   return tab;
 }
 
-const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+/** Runs in the page's own context via chrome.scripting.executeScript, so it
+ *  must be fully self-contained (no closures over outer-scope variables).
+ *
+ *  Two problems this solves, both confirmed live against real posts:
+ *   1. These apps hydrate the actual post content asynchronously — the DOM
+ *      right after navigation is just nav chrome (sidebar, "Messages"
+ *      widget) with no post text at all. Capturing HTML at that point
+ *      produces an empty extraction. So: poll the primary content container
+ *      until it has a meaningful amount of text (or a timeout elapses)
+ *      before doing anything else.
+ *   2. Facebook (and sometimes Instagram) collapse long captions behind a
+ *      "see more"/"查看更多" toggle whose text isn't in the DOM until
+ *      clicked. So: once content has loaded, click any such toggle.
+ */
+async function expandCaptionsInPage(): Promise<void> {
+  const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
-/** Clicks any "see more"/"查看更多"-style caption toggles in the page. Runs
- *  in the page's own context via chrome.scripting.executeScript, so it must
- *  be fully self-contained (no closures over outer-scope variables). Facebook
- *  in particular collapses long captions behind one of these — the text isn't
- *  in the DOM until it's clicked, so HTML captured before this step would
- *  only see the truncated caption. */
-function expandCaptionsInPage(): void {
+  const primaryContainer = (): Element =>
+    document.querySelector("article") ?? document.querySelector("main") ?? document.body;
+
+  // Wait for real content, not just the loading shell. 400 chars comfortably
+  // exceeds typical nav/chrome text but is well under a real caption.
+  const start = Date.now();
+  while ((primaryContainer().textContent ?? "").trim().length < 400 && Date.now() - start < 8000) {
+    await sleep(300);
+  }
+
   // Deliberately excludes bare "more"/"更多" — Instagram's own sidebar has a
-  // nav item literally labeled "More" that a plain substring/exact match on
-  // just "more" collides with (confirmed live: it opened the settings menu
-  // instead of expanding a caption). Only match phrases specific enough to
-  // caption toggles that real site nav wouldn't also use verbatim.
+  // nav item literally labeled "More" that a plain match on just "more"
+  // collides with (confirmed live: it opened the settings menu instead of
+  // expanding a caption). Only match phrases specific enough to caption
+  // toggles that real site nav wouldn't also use verbatim.
   const EXPAND_LABELS = ["see more", "...more", "… more", "查看更多", "顯示更多", "もっと見る", "続きを読む"];
-  const candidates = Array.from(document.querySelectorAll<HTMLElement>("span, div[role='button'], a"));
-  for (const el of candidates) {
-    const ownText = Array.from(el.childNodes)
-      .filter((n) => n.nodeType === Node.TEXT_NODE)
-      .map((n) => n.textContent ?? "")
-      .join("")
-      .trim()
-      .toLowerCase();
-    if (!EXPAND_LABELS.includes(ownText)) continue;
-    // skip real navigation links — the toggle is always a JS-driven span/button
-    if (el.tagName === "A" && (el as HTMLAnchorElement).href) continue;
-    // skip anything inside site chrome (nav/menu/dialog) — caption toggles
-    // live inside the post body, never inside navigation or a popup menu
-    if (el.closest("nav, [role='navigation'], [role='menu'], [role='dialog']")) continue;
-    el.click();
+  // A few passes: some UIs re-render after the first click and reveal a
+  // second toggle (e.g. a longer caption that expands in stages).
+  for (let pass = 0; pass < 3; pass++) {
+    const candidates = Array.from(document.querySelectorAll<HTMLElement>("span, div[role='button'], a"));
+    for (const el of candidates) {
+      const ownText = Array.from(el.childNodes)
+        .filter((n) => n.nodeType === Node.TEXT_NODE)
+        .map((n) => n.textContent ?? "")
+        .join("")
+        .trim()
+        .toLowerCase();
+      if (!EXPAND_LABELS.includes(ownText)) continue;
+      // skip real navigation links — the toggle is always a JS-driven span/button
+      if (el.tagName === "A" && (el as HTMLAnchorElement).href) continue;
+      // skip anything inside site chrome (nav/menu/dialog) — caption toggles
+      // live inside the post body, never inside navigation or a popup menu
+      if (el.closest("nav, [role='navigation'], [role='menu'], [role='dialog']")) continue;
+      el.click();
+    }
+    await sleep(500);
   }
 }
 
 async function expandCaptions(tabId: number): Promise<void> {
-  // Several passes: some UIs re-render after the first click and reveal a
-  // second toggle (e.g. a longer caption that expands in stages), and on a
-  // freshly-loaded tab the caption node itself can take a couple of seconds
-  // to render — a single quick pass can run before it exists at all.
-  for (let i = 0; i < 3; i++) {
-    await chrome.scripting.executeScript({ target: { tabId }, func: expandCaptionsInPage });
-    await sleep(600);
-  }
+  await chrome.scripting.executeScript({ target: { tabId }, func: expandCaptionsInPage });
 }
 
 async function capturePageHtml(tabId: number): Promise<string> {
@@ -112,7 +128,7 @@ async function save(): Promise<void> {
   }
 
   saveBtn.disabled = true;
-  setStatus("busy", "Saving… this can take ~15 s.");
+  setStatus("busy", isSocialCaptionSite(tab.url) ? "Saving… this can take ~30 s." : "Saving… this can take ~15 s.");
   hintEl.textContent = "Keep this popup open until it finishes.";
 
   let body: { url: string; html?: string };
