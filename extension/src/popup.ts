@@ -44,22 +44,27 @@ async function activeTab(): Promise<chrome.tabs.Tab | undefined> {
  *   1. These apps hydrate the actual post content asynchronously — the DOM
  *      right after navigation is just nav chrome (sidebar, "Messages"
  *      widget) with no post text at all. Capturing HTML at that point
- *      produces an empty extraction. So: poll the primary content container
- *      until it has a meaningful amount of text (or a timeout elapses)
- *      before doing anything else.
+ *      produces an empty extraction.
  *   2. Browsing from one post straight to another in the SAME tab (e.g.
  *      pasting a new URL over an already-loaded post) can leave the
  *      PREVIOUS post's content sitting in the DOM while the new one is
- *      still loading — that content is long enough to pass check #1 even
- *      though it's the wrong post entirely (confirmed live: saved a second
- *      post under its own correct URL, but with the previous post's title
- *      and ingredients). So: also cross-check that <link rel="canonical">
- *      / <meta property="og:url"> — which these platforms update on client-
- *      side navigation — actually reference the current URL's post id
- *      before trusting the content is caught up.
+ *      still loading — long enough to look ready, and even <link
+ *      rel="canonical">/<meta property="og:url"> can already show the new
+ *      URL (these update on route change, ahead of the async data fetch
+ *      that actually replaces the body). A one-shot check for "enough text"
+ *      or "meta matches the URL" can pass while still looking at the
+ *      previous post — confirmed live: this DOM appears to be a virtualized
+ *      feed, other unrelated posts' links are present alongside the
+ *      current one even once things "look" settled.
  *   3. Facebook (and sometimes Instagram) collapse long captions behind a
  *      "see more"/"查看更多" toggle whose text isn't in the DOM until
- *      clicked. So: once content has loaded, click any such toggle.
+ *      clicked.
+ *
+ *  Fix for #1/#2: don't trust a single snapshot. Require the primary
+ *  container's text to (a) be long enough, (b) have its meta tags agree
+ *  with the current URL when present, AND (c) stay UNCHANGED across
+ *  repeated checks for a stability window — a swap from stale to real
+ *  content shows up as a change and resets the clock.
  */
 async function expandCaptionsInPage(): Promise<void> {
   const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
@@ -83,15 +88,22 @@ async function expandCaptionsInPage(): Promise<void> {
     return canonical.includes(id) || ogUrl.includes(id);
   };
 
-  // Wait for real, CURRENT content — not just the loading shell (too little
-  // text), and not stale content left over from a previous post on the same
-  // tab (enough text, but the id doesn't match). 400 chars comfortably
-  // exceeds typical nav/chrome text but is well under a real caption.
+  const isReady = (): boolean =>
+    (primaryContainer().textContent ?? "").trim().length >= 400 && metaMatchesCurrentUrl();
+
+  const STABLE_MS = 900; // must hold steady this long before we trust it
   const start = Date.now();
-  while (
-    ((primaryContainer().textContent ?? "").trim().length < 400 || !metaMatchesCurrentUrl()) &&
-    Date.now() - start < 8000
-  ) {
+  let prevSnapshot: string | null = null;
+  let stableSince: number | null = null;
+  while (Date.now() - start < 10_000) {
+    const snapshot = (primaryContainer().textContent ?? "").trim();
+    if (isReady() && snapshot === prevSnapshot) {
+      stableSince ??= Date.now();
+      if (Date.now() - stableSince >= STABLE_MS) break;
+    } else {
+      stableSince = null; // not ready, or content just changed — reset the clock
+    }
+    prevSnapshot = snapshot;
     await sleep(300);
   }
 
