@@ -20,18 +20,35 @@
       background: #4B6B39; color: #fff;
     }
     button:disabled { opacity: .55; cursor: default; }
+    button.secondary { background: color-mix(in srgb, currentColor 12%, transparent); color: inherit; }
     #status { margin: 10px 0 0; font-size: 12.5px; min-height: 18px; }
     #status.ok { color: #3C7A2D; }
     #status.err { color: #B03A2E; }
     #status.busy { color: color-mix(in srgb, currentColor 70%, transparent); }
     #hint { margin: 4px 0 0; font-size: 11.5px; color: color-mix(in srgb, currentColor 55%, transparent); }
     a { color: inherit; }
+    #preview { margin-top: 10px; }
+    #preview-label {
+      margin: 0 0 6px; font-size: 11.5px; text-transform: uppercase; letter-spacing: .04em;
+      color: color-mix(in srgb, currentColor 55%, transparent);
+    }
+    #preview-titles { margin: 0 0 10px; padding-left: 18px; font-size: 13px; }
+    #preview-titles li { margin: 0 0 3px; }
+    .preview-actions { display: flex; gap: 8px; }
   </style>
 </head>
 <body>
   <h1>Recipe Library</h1>
   <p id="page-title">…</p>
   <button id="save">Save recipe</button>
+  <div id="preview" hidden>
+    <p id="preview-label">Found on this page:</p>
+    <ul id="preview-titles"></ul>
+    <div class="preview-actions">
+      <button id="confirm">Confirm &amp; save</button>
+      <button id="cancel" class="secondary">Cancel</button>
+    </div>
+  </div>
   <p id="status"></p>
   <p id="hint"></p>
   <script src="popup.js"></script>

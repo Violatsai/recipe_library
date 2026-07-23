@@ -192,6 +192,15 @@ async function persist(args: {
   };
 }
 
+/** The usable extraction(s) from a recipes[] response — drops empty entries
+ *  unless ALL of them are empty, in which case keep the lone thin/partial one
+ *  (matches the original single-recipe behavior of persisting a thin result
+ *  rather than silently discarding it). */
+function pickUsable(recipes: EnrichmentData[]): EnrichmentData[] {
+  const usable = recipes.filter((d) => d.ingredients.length > 0 || d.steps.length > 0);
+  return usable.length > 0 ? usable : recipes;
+}
+
 /** Text-source convenience wrapper: enrich from text, then persist one row
  *  per distinct recipe found — a page or video may bundle several (e.g. a
  *  roundup article, or a video that walks through multiple dishes). Same
@@ -206,8 +215,7 @@ async function enrichAndPersist(args: {
 }): Promise<IngestResult[]> {
   const approvedTags = await fetchApprovedTags();
   const recipes = await enrich({ approvedTags, userContent: args.userContent });
-  const usable = recipes.filter((d) => d.ingredients.length > 0 || d.steps.length > 0);
-  const list = usable.length > 0 ? usable : recipes; // keep the original behavior of persisting a lone thin/partial extraction
+  const list = pickUsable(recipes);
 
   const results: IngestResult[] = [];
   for (let i = 0; i < list.length; i++) {
@@ -307,6 +315,24 @@ export async function ingest(input: IngestInput): Promise<IngestResult[]> {
   const normalizedUrl = normalizeUrl(input.url);
   const source = detectSource(input.url);
   return source === "youtube" ? ingestYouTube(normalizedUrl) : ingestWeb(input, normalizedUrl);
+}
+
+export interface IngestPreviewResult {
+  title: string;
+  partial: boolean;
+}
+
+/** Enrichment only — no embed call, no DB write. Lets a caller (the
+ *  extension, for platforms prone to capturing a stale/wrong page) show what
+ *  was actually found before committing to a save. Web-only: the extension
+ *  never needs this for YouTube, since there's no client-side HTML capture
+ *  (and so no staleness risk) on that path. */
+export async function previewIngest(input: IngestInput): Promise<IngestPreviewResult[]> {
+  const normalizedUrl = normalizeUrl(input.url);
+  const html = await fetchPage(input.url, input.html); // may throw NeedsHtmlError → 422
+  const approvedTags = await fetchApprovedTags();
+  const recipes = await enrich({ approvedTags, userContent: pageContent(html, normalizedUrl) });
+  return pickUsable(recipes).map((d) => ({ title: d.title, partial: d.partial }));
 }
 
 const MEDIA_TYPE_EXT: Record<IngestPhotoInput["mediaType"], string> = {

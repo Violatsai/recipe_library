@@ -3,7 +3,7 @@ import { z } from "zod";
 import { asyncHandler } from "../http.js";
 import { config } from "../config.js";
 import { NeedsHtmlError } from "../ingest/fetchPage.js";
-import { ingest, ingestPhoto, NotARecipeError } from "../ingest/pipeline.js";
+import { ingest, ingestPhoto, previewIngest, NotARecipeError } from "../ingest/pipeline.js";
 
 export const ingestRouter = Router();
 
@@ -40,6 +40,33 @@ ingestRouter.post("/ingest", async (req, res) => {
       return;
     }
     res.status(500).json({ error: err instanceof Error ? err.message : "ingest failed" });
+  }
+});
+
+// Same x-api-key gate as /ingest — extension-only. Lets the popup show what
+// was actually captured (title, per recipe found) before committing to a
+// save, for platforms where a stale/wrong page capture is a real risk.
+ingestRouter.post("/ingest-preview", async (req, res) => {
+  const key = req.header("x-api-key");
+  if (!config.ingestApiKey || key !== config.ingestApiKey) {
+    res.status(401).json({ error: "invalid or missing x-api-key" });
+    return;
+  }
+
+  const parsed = Body.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: parsed.error.issues.map((i) => i.message).join("; ") });
+    return;
+  }
+
+  try {
+    res.json(await previewIngest(parsed.data));
+  } catch (err) {
+    if (err instanceof NeedsHtmlError) {
+      res.status(422).json({ error: "NEEDS_HTML" });
+      return;
+    }
+    res.status(500).json({ error: err instanceof Error ? err.message : "preview failed" });
   }
 });
 

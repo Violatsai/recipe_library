@@ -2,20 +2,37 @@ import { getSettings, isSocialCaptionSite, isYouTube } from "./shared.js";
 
 /**
  * Popup save flow:
- *   YouTube tab      → POST { url }                (server handles meta/link/transcript)
- *   any other tab    → POST { url, html }          (client-side capture — the page is
- *                                                   already rendered in the user's browser,
- *                                                   which also preempts NEEDS_HTML bot walls)
+ *   YouTube tab        → POST { url } to /api/ingest directly (server handles
+ *                         meta/link/transcript; no client-side capture, so no
+ *                         staleness risk).
+ *   social-caption tab → reload the tab, wait for the browser's own "load
+ *                         complete" event (not a heuristic), expand any
+ *                         collapsed caption, capture HTML, then POST to
+ *                         /api/ingest-preview and show what was found before
+ *                         saving anything. The user confirms or cancels.
+ *                         (Facebook/Instagram/Threads: these apps hydrate
+ *                         post content asynchronously and can leave a
+ *                         PREVIOUS post's content in the DOM while a new one
+ *                         loads client-side — confirmed live, more than once,
+ *                         that DOM-timing heuristics alone aren't reliable
+ *                         enough here. A forced reload guarantees the DOM is
+ *                         built fresh for the current URL; the preview step
+ *                         is the safety net for anything that still slips
+ *                         through.)
+ *   any other tab      → POST { url, html } directly, same as before.
  *
  * Known limitation (accepted in the plan): the fetch runs in the popup, so the
- * popup must stay open until the response arrives (~10–30 s while the server
- * enriches). The hint text tells the user.
+ * popup must stay open until the response arrives. The hint text tells the user.
  */
 
 const saveBtn = document.getElementById("save") as HTMLButtonElement;
 const titleEl = document.getElementById("page-title")!;
 const statusEl = document.getElementById("status")!;
 const hintEl = document.getElementById("hint")!;
+const previewEl = document.getElementById("preview") as HTMLDivElement;
+const previewTitlesEl = document.getElementById("preview-titles") as HTMLUListElement;
+const confirmBtn = document.getElementById("confirm") as HTMLButtonElement;
+const cancelBtn = document.getElementById("cancel") as HTMLButtonElement;
 
 function setStatus(kind: "ok" | "err" | "busy" | "", text: string): void {
   statusEl.className = kind;
@@ -28,8 +45,18 @@ interface IngestResult {
   partial: boolean;
 }
 
+interface IngestPreviewResult {
+  title: string;
+  partial: boolean;
+}
+
 interface IngestError {
   error?: string;
+}
+
+interface IngestBody {
+  url: string;
+  html?: string;
 }
 
 async function activeTab(): Promise<chrome.tabs.Tab | undefined> {
@@ -37,34 +64,45 @@ async function activeTab(): Promise<chrome.tabs.Tab | undefined> {
   return tab;
 }
 
+/** Reloads the tab and waits for the browser's own load-complete signal —
+ *  not a DOM-content heuristic. A hard reload guarantees the resulting DOM
+ *  is built fresh for whatever URL is currently in the address bar, so a
+ *  previous post's content on the same tab can't linger into this load. */
+function waitForTabComplete(tabId: number, timeoutMs = 20_000): Promise<void> {
+  return new Promise((resolve) => {
+    let done = false;
+    const finish = () => {
+      if (done) return;
+      done = true;
+      chrome.tabs.onUpdated.removeListener(listener);
+      clearTimeout(timer);
+      resolve();
+    };
+    const listener = (updatedTabId: number, changeInfo: chrome.tabs.TabChangeInfo) => {
+      if (updatedTabId === tabId && changeInfo.status === "complete") finish();
+    };
+    chrome.tabs.onUpdated.addListener(listener);
+    const timer = setTimeout(finish, timeoutMs); // fallback — never hang the popup indefinitely
+  });
+}
+
+async function reloadAndWait(tabId: number): Promise<void> {
+  await chrome.tabs.reload(tabId);
+  await waitForTabComplete(tabId);
+}
+
 /** Runs in the page's own context via chrome.scripting.executeScript, so it
  *  must be fully self-contained (no closures over outer-scope variables).
  *
- *  Three problems this solves, all confirmed live against real posts:
- *   1. These apps hydrate the actual post content asynchronously — the DOM
- *      right after navigation is just nav chrome (sidebar, "Messages"
- *      widget) with no post text at all. Capturing HTML at that point
- *      produces an empty extraction.
- *   2. Browsing from one post straight to another in the SAME tab (e.g.
- *      pasting a new URL over an already-loaded post) can leave the
- *      PREVIOUS post's content sitting in the DOM while the new one is
- *      still loading — long enough to look ready, and even <link
- *      rel="canonical">/<meta property="og:url"> can already show the new
- *      URL (these update on route change, ahead of the async data fetch
- *      that actually replaces the body). A one-shot check for "enough text"
- *      or "meta matches the URL" can pass while still looking at the
- *      previous post — confirmed live: this DOM appears to be a virtualized
- *      feed, other unrelated posts' links are present alongside the
- *      current one even once things "look" settled.
- *   3. Facebook (and sometimes Instagram) collapse long captions behind a
+ *  Two problems this solves, confirmed live against real posts:
+ *   1. These apps hydrate the actual post content asynchronously — right
+ *      after a fresh load the DOM is just nav chrome (sidebar, "Messages"
+ *      widget) with no post text yet. Capturing HTML at that point produces
+ *      an empty extraction. So: poll the primary content container until it
+ *      has a meaningful amount of text, or a timeout elapses.
+ *   2. Facebook (and sometimes Instagram) collapse long captions behind a
  *      "see more"/"查看更多" toggle whose text isn't in the DOM until
- *      clicked.
- *
- *  Fix for #1/#2: don't trust a single snapshot. Require the primary
- *  container's text to (a) be long enough, (b) have its meta tags agree
- *  with the current URL when present, AND (c) stay UNCHANGED across
- *  repeated checks for a stability window — a swap from stale to real
- *  content shows up as a change and resets the clock.
+ *      clicked. So: once content has loaded, click any such toggle.
  */
 async function expandCaptionsInPage(): Promise<void> {
   const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
@@ -72,38 +110,8 @@ async function expandCaptionsInPage(): Promise<void> {
   const primaryContainer = (): Element =>
     document.querySelector("article") ?? document.querySelector("main") ?? document.body;
 
-  // The last non-empty path segment is the post/reel id on every URL form
-  // these hosts use (/p/<id>, /reel/<id>, /reels/<id>, /share/r/<id>).
-  const currentPostId = (): string | null => {
-    const segs = location.pathname.split("/").filter(Boolean);
-    return segs[segs.length - 1] ?? null;
-  };
-
-  const metaMatchesCurrentUrl = (): boolean => {
-    const id = currentPostId();
-    if (!id) return true; // nothing to cross-check — don't block on this signal
-    const canonical = document.querySelector<HTMLLinkElement>('link[rel="canonical"]')?.href ?? "";
-    const ogUrl = document.querySelector<HTMLMetaElement>('meta[property="og:url"]')?.content ?? "";
-    if (!canonical && !ogUrl) return true; // no meta tags present — don't block
-    return canonical.includes(id) || ogUrl.includes(id);
-  };
-
-  const isReady = (): boolean =>
-    (primaryContainer().textContent ?? "").trim().length >= 400 && metaMatchesCurrentUrl();
-
-  const STABLE_MS = 900; // must hold steady this long before we trust it
   const start = Date.now();
-  let prevSnapshot: string | null = null;
-  let stableSince: number | null = null;
-  while (Date.now() - start < 10_000) {
-    const snapshot = (primaryContainer().textContent ?? "").trim();
-    if (isReady() && snapshot === prevSnapshot) {
-      stableSince ??= Date.now();
-      if (Date.now() - stableSince >= STABLE_MS) break;
-    } else {
-      stableSince = null; // not ready, or content just changed — reset the clock
-    }
-    prevSnapshot = snapshot;
+  while ((primaryContainer().textContent ?? "").trim().length < 400 && Date.now() - start < 8000) {
     await sleep(300);
   }
 
@@ -152,6 +160,93 @@ async function capturePageHtml(tabId: number): Promise<string> {
   return html;
 }
 
+let pendingBody: IngestBody | null = null;
+
+function showPreview(body: IngestBody, results: IngestPreviewResult[]): void {
+  pendingBody = body;
+  previewTitlesEl.innerHTML = "";
+  for (const r of results) {
+    const li = document.createElement("li");
+    li.textContent = r.title + (r.partial ? " (partial)" : "");
+    previewTitlesEl.appendChild(li);
+  }
+  saveBtn.hidden = true;
+  previewEl.hidden = false;
+  hintEl.textContent = "";
+}
+
+function resetToIdle(): void {
+  pendingBody = null;
+  previewEl.hidden = true;
+  saveBtn.hidden = false;
+  saveBtn.disabled = false;
+  hintEl.textContent = "";
+}
+
+function reportIngestResults(results: IngestResult[]): void {
+  if (results.length === 1) {
+    const r = results[0]!;
+    const partialNote = r.partial ? " — partial extraction, source was thin" : "";
+    setStatus(
+      "ok",
+      r.status === "updated" ? `Updated ✓ ${r.title} (already in library)` : `Saved ✓ ${r.title}${partialNote}`,
+    );
+  } else {
+    const saved = results.filter((r) => r.status === "saved").length;
+    const updated = results.length - saved;
+    const counts = [saved && `${saved} saved`, updated && `${updated} updated`].filter(Boolean).join(", ");
+    setStatus("ok", `${results.length} recipes found ✓ (${counts}): ${results.map((r) => r.title).join(", ")}`);
+  }
+}
+
+async function doFullSave(body: IngestBody): Promise<void> {
+  const settings = await getSettings();
+  try {
+    const resp = await fetch(`${settings.apiBase}/api/ingest`, {
+      method: "POST",
+      headers: { "content-type": "application/json", "x-api-key": settings.apiKey },
+      body: JSON.stringify(body),
+    });
+    const data = (await resp.json().catch(() => ({}))) as IngestResult[] | IngestError;
+    if (resp.status === 401) {
+      setStatus("err", "Invalid API key — check settings.");
+    } else if (!resp.ok) {
+      setStatus("err", (data as IngestError).error ?? `Server error (HTTP ${resp.status}).`);
+    } else {
+      reportIngestResults(data as IngestResult[]);
+    }
+  } catch {
+    setStatus("err", "Could not reach the server — is it running?");
+  }
+}
+
+async function doPreview(body: IngestBody): Promise<void> {
+  const settings = await getSettings();
+  try {
+    const resp = await fetch(`${settings.apiBase}/api/ingest-preview`, {
+      method: "POST",
+      headers: { "content-type": "application/json", "x-api-key": settings.apiKey },
+      body: JSON.stringify(body),
+    });
+    const data = (await resp.json().catch(() => ({}))) as IngestPreviewResult[] | IngestError;
+    if (resp.status === 401) {
+      setStatus("err", "Invalid API key — check settings.");
+    } else if (!resp.ok) {
+      setStatus("err", (data as IngestError).error ?? `Server error (HTTP ${resp.status}).`);
+    } else {
+      const results = data as IngestPreviewResult[];
+      if (results.length === 0) {
+        setStatus("err", "No recipe found on this page.");
+      } else {
+        setStatus("", "");
+        showPreview(body, results);
+      }
+    }
+  } catch {
+    setStatus("err", "Could not reach the server — is it running?");
+  }
+}
+
 async function save(): Promise<void> {
   const settings = await getSettings();
   if (!settings.apiKey) {
@@ -170,62 +265,58 @@ async function save(): Promise<void> {
     return;
   }
 
+  const social = isSocialCaptionSite(tab.url);
   saveBtn.disabled = true;
-  setStatus("busy", isSocialCaptionSite(tab.url) ? "Saving… this can take ~30 s." : "Saving… this can take ~15 s.");
+  setStatus("busy", social ? "Loading a fresh copy of the page… this can take ~30 s." : "Saving… this can take ~15 s.");
   hintEl.textContent = "Keep this popup open until it finishes.";
 
-  let body: { url: string; html?: string };
   try {
     if (isYouTube(tab.url)) {
-      body = { url: tab.url };
+      await doFullSave({ url: tab.url });
+      saveBtn.disabled = false;
+    } else if (social) {
+      await reloadAndWait(tab.id);
+      await expandCaptions(tab.id);
+      const html = await capturePageHtml(tab.id);
+      setStatus("busy", "Checking what's on the page…");
+      await doPreview({ url: tab.url, html });
+      // showPreview()/doPreview()'s error path both leave saveBtn visible —
+      // re-enable it unless a preview is now showing (save stays hidden then).
+      if (previewEl.hidden) saveBtn.disabled = false;
     } else {
-      if (isSocialCaptionSite(tab.url)) await expandCaptions(tab.id);
-      body = { url: tab.url, html: await capturePageHtml(tab.id) };
+      const html = await capturePageHtml(tab.id);
+      await doFullSave({ url: tab.url, html });
+      saveBtn.disabled = false;
     }
   } catch (err) {
     setStatus("err", `Couldn't read the page: ${err instanceof Error ? err.message : err}`);
     saveBtn.disabled = false;
-    return;
-  }
-
-  try {
-    const resp = await fetch(`${settings.apiBase}/api/ingest`, {
-      method: "POST",
-      headers: { "content-type": "application/json", "x-api-key": settings.apiKey },
-      body: JSON.stringify(body),
-    });
-    const data = (await resp.json().catch(() => ({}))) as IngestResult[] | IngestError;
-
-    if (resp.status === 401) {
-      setStatus("err", "Invalid API key — check settings.");
-    } else if (!resp.ok) {
-      setStatus("err", (data as IngestError).error ?? `Server error (HTTP ${resp.status}).`);
-    } else {
-      const results = data as IngestResult[];
-      if (results.length === 1) {
-        const r = results[0]!;
-        const partialNote = r.partial ? " — partial extraction, source was thin" : "";
-        setStatus(
-          "ok",
-          r.status === "updated" ? `Updated ✓ ${r.title} (already in library)` : `Saved ✓ ${r.title}${partialNote}`,
-        );
-      } else {
-        const saved = results.filter((r) => r.status === "saved").length;
-        const updated = results.length - saved;
-        const counts = [saved && `${saved} saved`, updated && `${updated} updated`].filter(Boolean).join(", ");
-        setStatus("ok", `${results.length} recipes found ✓ (${counts}): ${results.map((r) => r.title).join(", ")}`);
-      }
-    }
-  } catch {
-    setStatus("err", "Could not reach the server — is it running?");
   } finally {
     hintEl.textContent = "";
-    saveBtn.disabled = false;
   }
+}
+
+async function confirmSave(): Promise<void> {
+  if (!pendingBody) return;
+  const body = pendingBody;
+  previewEl.hidden = true;
+  saveBtn.hidden = false;
+  saveBtn.disabled = true;
+  setStatus("busy", "Saving…");
+  await doFullSave(body);
+  pendingBody = null;
+  saveBtn.disabled = false;
+}
+
+function cancel(): void {
+  resetToIdle();
+  setStatus("", "");
 }
 
 void (async () => {
   const tab = await activeTab();
   titleEl.textContent = tab?.title ?? tab?.url ?? "(no active tab)";
   saveBtn.addEventListener("click", () => void save());
+  confirmBtn.addEventListener("click", () => void confirmSave());
+  cancelBtn.addEventListener("click", cancel);
 })();
