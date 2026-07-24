@@ -5,18 +5,23 @@ import { getSettings, isSocialCaptionSite, isYouTube } from "./shared.js";
  *   YouTube tab        → POST { url } to /api/ingest directly (server handles
  *                         meta/link/transcript; no client-side capture, so no
  *                         staleness risk).
- *   social-caption tab → reload the tab, wait for the browser's own "load
- *                         complete" event (not a heuristic), expand any
- *                         collapsed caption, capture HTML, then POST to
- *                         /api/ingest-preview and show what was found before
- *                         saving anything. The user confirms or cancels.
+ *   social-caption tab → expand any collapsed caption, capture HTML, then
+ *                         POST to /api/ingest-preview and show what was
+ *                         found before saving anything. The user confirms
+ *                         or cancels.
  *                         (Facebook/Instagram/Threads: these apps hydrate
  *                         post content asynchronously and can leave a
  *                         PREVIOUS post's content in the DOM while a new one
- *                         loads client-side — confirmed live, more than once,
- *                         that DOM-timing heuristics alone aren't reliable
- *                         enough here. A forced reload guarantees the DOM is
- *                         built fresh for the current URL; the preview step
+ *                         loads client-side — confirmed live, more than
+ *                         once, that DOM-timing heuristics alone aren't
+ *                         reliable enough here. A forced reload from the
+ *                         popup would fix the staleness at the root, but
+ *                         Chrome appears to close the popup as a side effect
+ *                         of it reloading its own anchor tab — confirmed
+ *                         live: the async flow died before ever reaching the
+ *                         network call. So the popup asks the user to
+ *                         refresh the page themselves before saving instead
+ *                         (see the standing hint below); the preview step
  *                         is the safety net for anything that still slips
  *                         through.)
  *   any other tab      → POST { url, html } directly, same as before.
@@ -62,33 +67,6 @@ interface IngestBody {
 async function activeTab(): Promise<chrome.tabs.Tab | undefined> {
   const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
   return tab;
-}
-
-/** Reloads the tab and waits for the browser's own load-complete signal —
- *  not a DOM-content heuristic. A hard reload guarantees the resulting DOM
- *  is built fresh for whatever URL is currently in the address bar, so a
- *  previous post's content on the same tab can't linger into this load. */
-function waitForTabComplete(tabId: number, timeoutMs = 20_000): Promise<void> {
-  return new Promise((resolve) => {
-    let done = false;
-    const finish = () => {
-      if (done) return;
-      done = true;
-      chrome.tabs.onUpdated.removeListener(listener);
-      clearTimeout(timer);
-      resolve();
-    };
-    const listener = (updatedTabId: number, changeInfo: chrome.tabs.TabChangeInfo) => {
-      if (updatedTabId === tabId && changeInfo.status === "complete") finish();
-    };
-    chrome.tabs.onUpdated.addListener(listener);
-    const timer = setTimeout(finish, timeoutMs); // fallback — never hang the popup indefinitely
-  });
-}
-
-async function reloadAndWait(tabId: number): Promise<void> {
-  await chrome.tabs.reload(tabId);
-  await waitForTabComplete(tabId);
 }
 
 /** Runs in the page's own context via chrome.scripting.executeScript, so it
@@ -161,6 +139,18 @@ async function capturePageHtml(tabId: number): Promise<string> {
 }
 
 let pendingBody: IngestBody | null = null;
+let currentTabUrl = "";
+
+/** Standing reminder for social-caption sites — since the popup can't safely
+ *  reload the tab itself (confirmed live: Chrome appears to close the popup
+ *  as a side effect, killing the save mid-flight before it ever reaches the
+ *  network), refreshing is on the user when it's actually needed: right
+ *  after browsing from one post straight to another in the same tab. */
+function setSocialHint(url: string): void {
+  hintEl.textContent = isSocialCaptionSite(url)
+    ? "Tip: if this tab was showing a different post a moment ago, refresh the page (⌘R) before saving."
+    : "";
+}
 
 function showPreview(body: IngestBody, results: IngestPreviewResult[]): void {
   pendingBody = body;
@@ -180,7 +170,7 @@ function resetToIdle(): void {
   previewEl.hidden = true;
   saveBtn.hidden = false;
   saveBtn.disabled = false;
-  hintEl.textContent = "";
+  setSocialHint(currentTabUrl);
 }
 
 function reportIngestResults(results: IngestResult[]): void {
@@ -264,26 +254,31 @@ async function save(): Promise<void> {
     setStatus("err", "This page can't be saved (not an http/https tab).");
     return;
   }
+  currentTabUrl = tab.url;
 
   const social = isSocialCaptionSite(tab.url);
   saveBtn.disabled = true;
-  setStatus("busy", social ? "Loading a fresh copy of the page… this can take ~30 s." : "Saving… this can take ~15 s.");
-  hintEl.textContent = "Keep this popup open until it finishes.";
+  setStatus("busy", social ? "Checking the page… this can take ~20 s." : "Saving… this can take ~15 s.");
 
   try {
     if (isYouTube(tab.url)) {
+      hintEl.textContent = "Keep this popup open until it finishes.";
       await doFullSave({ url: tab.url });
       saveBtn.disabled = false;
     } else if (social) {
-      await reloadAndWait(tab.id);
+      hintEl.textContent = "Keep this popup open until it finishes.";
       await expandCaptions(tab.id);
       const html = await capturePageHtml(tab.id);
       setStatus("busy", "Checking what's on the page…");
       await doPreview({ url: tab.url, html });
       // showPreview()/doPreview()'s error path both leave saveBtn visible —
       // re-enable it unless a preview is now showing (save stays hidden then).
-      if (previewEl.hidden) saveBtn.disabled = false;
+      if (previewEl.hidden) {
+        saveBtn.disabled = false;
+        setSocialHint(tab.url);
+      }
     } else {
+      hintEl.textContent = "Keep this popup open until it finishes.";
       const html = await capturePageHtml(tab.id);
       await doFullSave({ url: tab.url, html });
       saveBtn.disabled = false;
@@ -291,8 +286,7 @@ async function save(): Promise<void> {
   } catch (err) {
     setStatus("err", `Couldn't read the page: ${err instanceof Error ? err.message : err}`);
     saveBtn.disabled = false;
-  } finally {
-    hintEl.textContent = "";
+    setSocialHint(tab.url);
   }
 }
 
@@ -316,6 +310,10 @@ function cancel(): void {
 void (async () => {
   const tab = await activeTab();
   titleEl.textContent = tab?.title ?? tab?.url ?? "(no active tab)";
+  if (tab?.url) {
+    currentTabUrl = tab.url;
+    setSocialHint(tab.url);
+  }
   saveBtn.addEventListener("click", () => void save());
   confirmBtn.addEventListener("click", () => void confirmSave());
   cancelBtn.addEventListener("click", cancel);
