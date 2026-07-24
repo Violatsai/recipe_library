@@ -44,6 +44,10 @@ function setStatus(kind: "ok" | "err" | "busy" | "", text: string): void {
   statusEl.textContent = text;
 }
 
+// The fetch runs in the popup itself, so it dies the moment the popup
+// closes — including just switching tabs, which steals focus and closes it.
+const STAY_HINT = "Stay on this tab and keep this popup open — switching tabs cancels the save.";
+
 interface IngestResult {
   status: "saved" | "updated";
   title: string;
@@ -259,14 +263,13 @@ async function save(): Promise<void> {
   const social = isSocialCaptionSite(tab.url);
   saveBtn.disabled = true;
   setStatus("busy", social ? "Checking the page… this can take ~20 s." : "Saving… this can take ~15 s.");
+  hintEl.textContent = STAY_HINT;
 
   try {
     if (isYouTube(tab.url)) {
-      hintEl.textContent = "Keep this popup open until it finishes.";
       await doFullSave({ url: tab.url });
       saveBtn.disabled = false;
     } else if (social) {
-      hintEl.textContent = "Keep this popup open until it finishes.";
       await expandCaptions(tab.id);
       const html = await capturePageHtml(tab.id);
       setStatus("busy", "Checking what's on the page…");
@@ -278,7 +281,6 @@ async function save(): Promise<void> {
         setSocialHint(tab.url);
       }
     } else {
-      hintEl.textContent = "Keep this popup open until it finishes.";
       const html = await capturePageHtml(tab.id);
       await doFullSave({ url: tab.url, html });
       saveBtn.disabled = false;
