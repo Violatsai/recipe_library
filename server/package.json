@@ -2,6 +2,7 @@
   "name": "server",
   "version": "0.0.0",
   "private": true,
+  "license": "MIT",
   "type": "module",
   "scripts": {
     "dev": "tsx watch src/index.ts",
@@ -9,6 +10,7 @@
     "migrate": "tsx scripts/migrate.ts",
     "smoke": "tsx scripts/smoke.ts",
     "import-bookmarks": "tsx scripts/bulk-import-bookmarks.ts",
+    "typecheck": "tsc --noEmit",
     "test": "vitest run"
   },
   "dependencies": {

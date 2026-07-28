@@ -209,6 +209,23 @@ A single web app; chat is the entry point for both retrieval and planning. It re
 
 ---
 
+## Post-MVP additions
+
+Shipped after M0–M8 closed; the sections above describe the original design and are
+mostly still accurate, but don't mention these. Kept brief — see git history / commit
+messages for the full reasoning behind each.
+
+| Area | What was added |
+|---|---|
+| **capture sources** | Photo of a recipe (cookbook page, handwritten card) via Claude vision, ingested through the Library tab rather than the extension. Facebook/Instagram/Threads posts, via the same client-side-HTML-capture path as regular web pages, plus a preview-before-save step in the extension popup (these apps hydrate content asynchronously, which makes a one-shot capture unreliable — see `extension/src/popup.ts`). |
+| **multi-recipe extraction** | A single source (web page, video, or photo) can contain more than one recipe (a roundup article, a video walking through several dishes, two recipes on one cookbook page). Enrichment returns an array; each becomes its own row. Dedup key stays the plain `source_url` for the common single-recipe case, suffixed `#<index>` once a source yields more than one. |
+| **pantry management via chat** | `add_pantry_staples`/`remove_pantry_staples` agent tools, so staples update conversationally instead of only through Settings. |
+| **grocery list → Apple Reminders** | Optional, macOS-only push of a grocery list to Reminders.app via AppleScript (`server/src/reminders.ts`) — syncs to phone through iCloud, no accounts needed. |
+| **bulk import** | `server/scripts/bulk-import-bookmarks.ts` — ingests every link in a Chrome-bookmarks-export folder directly through the pipeline (bypassing the extension), reporting which pages need a manual save because they're bot-walled server-side. |
+| **`list_meal_plans` agent tool** | Chat history between turns is plain text only (no tool-call IDs survive), so the agent had no way to reuse a meal plan created earlier in the conversation and would recreate it from scratch. This tool lets it look up an existing plan by its recipes/title, the same way `search_recipes` lets it rediscover recipe ids. |
+
+---
+
 ## Implementation risks
 
 - **YouTube transcripts are the flakiest dependency.** The official Data API doesn't expose captions for videos you don't own; unofficial transcript scrapers break periodically. Description-first always; transcript best-effort with graceful partial saves ("saved with partial info — open the video to complete").

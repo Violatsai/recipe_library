@@ -1,15 +1,18 @@
 # Recipe Library
 
-Personal recipe-capture + meal-planning tool. Chrome extension saves recipes from web pages
-and YouTube; a Claude-powered agent searches the library and plans meals over chat.
+Personal recipe-capture + meal-planning tool. Chrome extension saves recipes from web pages,
+YouTube, Facebook/Instagram/Threads, and photos; a Claude-powered agent searches the library
+and plans meals over chat.
 
 **Status: all milestones (M0–M8) complete.** The execution plan is historical record;
-work from here is normal feature/fix development.
+work from here is normal feature/fix development — see `ARCHITECTURE.md`'s
+"Post-MVP additions" for what's shipped since.
 
 ## Read before working
 
 1. **`ARCHITECTURE.md`** — the design. All decisions are settled there (see "Settled
-   decisions" table). Do not redesign without discussing with the user.
+   decisions" table; see "Post-MVP additions" for what shipped after M0–M8). Do not
+   redesign without discussing with the user.
 2. **`docs/execution-plan.md`** — the build script the MVP was built from (M0–M8, done).
    Useful as a map of what exists and why; deviations are recorded inline.
 3. **`README.md`** — setup + commands.

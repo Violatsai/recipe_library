@@ -3,6 +3,11 @@
   "private": true,
   "version": "0.0.0",
   "description": "Personal recipe-capture + meal-planning tool. See ARCHITECTURE.md and docs/execution-plan.md.",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Violatsai/recipe_library.git"
+  },
   "workspaces": [
     "server",
     "extension",
@@ -17,6 +22,7 @@
     "migrate": "npm run migrate --workspace server",
     "smoke": "npm run smoke --workspace server",
     "import-bookmarks": "npm run import-bookmarks --workspace server --",
-    "test": "npm run test --workspace server"
+    "test": "npm run test --workspace server",
+    "typecheck": "npm run typecheck --workspaces --if-present"
   }
 }
