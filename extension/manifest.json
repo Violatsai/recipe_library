@@ -7,6 +7,9 @@
     "default_popup": "popup.html",
     "default_title": "Save recipe"
   },
+  "background": {
+    "service_worker": "background.js"
+  },
   "options_ui": {
     "page": "options.html",
     "open_in_tab": true

@@ -84,14 +84,16 @@ npm run build --workspace extension
 1. `chrome://extensions` → enable **Developer mode** → **Load unpacked** → select `extension/dist`
 2. Right-click the icon → **Options** → set API base (`http://localhost:3001`) and your `INGEST_API_KEY`
 3. Open any recipe page or YouTube cooking video → click the icon → **Save recipe**
-   (keep the popup open — and stay on that tab — while it extracts; switching away cancels it)
+4. Once the popup says **Queued ✓**, you can close it or navigate away; the local server
+   continues extraction in the background.
 
 **Facebook/Instagram/Threads:** same flow, but the popup shows a preview of what it
 found (the detected recipe title(s)) and waits for you to confirm before saving —
 these apps hydrate post content asynchronously in ways that make a one-shot capture
 unreliable, so the preview step is a deliberate safety check, not an extra step you
-can skip. If you just navigated from one post straight to another in the same tab,
-refresh the page (⌘R) before clicking Save.
+can skip. Keep the popup open while that preview is generated; after **Confirm & queue**,
+the background handoff behaves like any other save. If you just navigated from one post
+straight to another in the same tab, refresh the page (⌘R) before clicking Save.
 
 **Photo of a recipe** (cookbook page, handwritten card, screenshot): use **"+ Add
 from photo"** in the Library tab of the web app instead of the extension — it goes
@@ -121,8 +123,9 @@ which pages need a manual extension-save because they're bot-walled server-side.
 
 ```sh
 npm test                  # unit tests (URL identity, JSON-LD, grocery scaling)
-npm run smoke             # end-to-end: ingests a fixture through the running
-                          # server, asserts the row, cleans up (needs dev:server up)
+npm run smoke             # end-to-end: queues a captured fixture through the running
+                          # worker, verifies lifecycle + recipe, then cleans up
+                          # (needs dev:server up and costs one enrichment/embedding)
 ```
 
 ## Layout

@@ -225,11 +225,16 @@
     </div>
   </header>
 
-  <div class="flow" aria-label="Data flow across the four layers">
+  <div class="flow" aria-label="Data flow from capture through the durable queue, library, agent, and chat">
     <div class="node">
       <div class="n">01</div>
       <div class="t">Capture</div>
-      <div class="d">Extension grabs a page or video; ingestion extracts, scores macros, tags, embeds.</div>
+      <div class="d">Extension snapshots a page or video and submits it for ingestion.</div>
+    </div>
+    <div class="node">
+      <div class="n">QUEUE</div>
+      <div class="t">Durable handoff</div>
+      <div class="d">Postgres accepts the job before server-side extraction begins.</div>
     </div>
     <div class="node">
       <div class="n">02</div>
@@ -251,7 +256,35 @@
   <!-- LAYER 1 -->
   <section class="layer">
     <div class="layer-head"><span class="layer-num">01</span><h2>Capture &amp; ingestion</h2></div>
-    <p>The extension sends raw source content to an ingestion worker. Three source types collapse into <strong>two extraction strategies</strong> — fetch a clean page, or extract from a transcript — so most of the pipeline is shared.</p>
+    <p>The extension snapshots raw source content and submits it to a durable, Postgres-backed ingestion queue. The server acknowledges the persisted job immediately; a single in-process worker then performs extraction independently of the popup and browser tab. Three source types collapse into <strong>two extraction strategies</strong> — fetch a clean page, or extract from a transcript — so most of the pipeline is shared.</p>
+
+    <h3>Durable asynchronous handoff</h3>
+    <div class="call flag">
+      <span class="lbl">Implementation status</span>
+      <p>The durable job schema/API, concurrency-one worker, interrupted-job recovery, sanitized failure recording, atomic multi-recipe persistence, extension background handoff, Library lifecycle cards, visibility-aware polling, and queued smoke path are implemented.</p>
+    </div>
+    <pre class="plain">extension captures URL/title/HTML
+          │
+          ▼
+POST ingestion job ──▶ persist queued row ──▶ return 202
+                                 │
+                                 ▼
+                       one in-process worker
+                                 │
+                   ┌─────────────┴─────────────┐
+                   ▼                           ▼
+              succeeded                    failed
+                   │                           │
+          normal recipe card          retryable error card</pre>
+
+    <p>The committed ingestion-job row is the durable boundary. The extension background service worker only delivers the snapshot; it does not own the Claude/Voyage work. Once the server returns <code>202</code>, the popup may close and the user may navigate away.</p>
+
+    <div class="call">
+      <span class="lbl">Deliberately small queue</span>
+      <p>One concurrency-one worker runs inside the existing server, with Postgres as its only queue store. No Redis, BullMQ, separate worker service, or general-purpose queue framework. Delivery is at least once; normalized-URL upserts make reprocessing safe. Interrupted <code>processing</code> jobs return to <code>queued</code> on startup.</p>
+    </div>
+
+    <p>The first release queues extension saves from web pages and YouTube. Photo upload and bookmark import remain synchronous. Facebook/Instagram/Threads retain expand → preview → explicit confirmation; only post-confirmation work is queued. Failed jobs retain captured input for manual Retry/Dismiss, while successful jobs clear captured HTML.</p>
 
     <h3>Source decision tree</h3>
     <pre class="plain"><span class="cm"># Web page</span>
@@ -339,6 +372,30 @@ quantity    <span class="kw">numeric</span>    <span class="cm">-- nullable ("a 
 unit        <span class="kw">text</span>       <span class="cm">-- 'g','ml','clove','tbsp' · nullable</span>
 raw_text    <span class="kw">text</span>       <span class="cm">-- original line, fallback when parse fails</span></pre>
     </div>
+
+    <h3>Ingestion lifecycle</h3>
+    <p>In-progress and failed captures are separate from <code>recipes</code>, so placeholders never leak into search, agent results, meal plans, or recipe-detail queries.</p>
+    <div class="card">
+      <div class="card-bar"><span class="tbl">ingestion_jobs</span><span class="rel">one lifecycle record per normalized source</span></div>
+<pre>id                 <span class="kw">uuid</span> pk
+normalized_url     <span class="kw">text</span> <span class="fl">unique</span>
+source_url          <span class="kw">text</span>
+source_type         <span class="kw">text</span>       <span class="cm">-- 'web' | 'youtube'</span>
+captured_title      <span class="kw">text</span>
+source_html         <span class="kw">text</span>        <span class="cm">-- nullable; cleared on success</span>
+status              <span class="kw">text</span>        <span class="cm">-- queued | processing | succeeded | failed</span>
+attempt_count       <span class="kw">int</span> default 0
+error_code          <span class="kw">text</span>
+error_message       <span class="kw">text</span>        <span class="cm">-- sanitized for Library display</span>
+submitted_at · started_at · finished_at · updated_at <span class="kw">timestamptz</span></pre>
+    </div>
+    <div class="card">
+      <div class="card-bar"><span class="tbl">ingestion_job_recipes</span><span class="rel">job → one or more recipes</span></div>
+<pre>job_id      <span class="kw">uuid</span> fk → ingestion_jobs
+recipe_id   <span class="kw">uuid</span> fk → recipes
+<span class="fl">pk(job_id, recipe_id)</span></pre>
+    </div>
+    <p>An active duplicate returns the existing job; a failed or completed source is requeued with the newest snapshot. Claims are atomic, and all recipes from a multi-recipe source are embedded before being persisted together in one transaction.</p>
 
     <h3>Taxonomy — controlled vocabulary</h3>
     <div class="card">
@@ -436,13 +493,15 @@ save_grocery_list(meal_plan_id, items[]) → grocery_list_id</pre>
   <section class="layer">
     <div class="layer-head"><span class="layer-num">04</span><h2>Chat UI</h2></div>
     <p>A single web app; chat is the entry point for both retrieval and planning. It renders the agent's tool results: clickable recipe cards (→ detail overlay), a week's plan with hyperlinked recipes, and a grocery checklist with two views — by store section (persisted checkboxes) or by recipe (derived, read-only). Beyond chat: a <strong>Library</strong> tab (search by title/ingredient, tag filters, delete), a <strong>Plans</strong> tab (persistent home for meal plans + grocery lists, with editable title/date), and <strong>Settings</strong> (pantry + tag management).</p>
+    <p>While visible, the Library polls only while queued or processing jobs exist. Pending jobs are labeled placeholder cards; failed jobs are labeled error cards with Retry and Dismiss. Status uses text and icons as well as color. A succeeded placeholder disappears as its one or more normal recipe cards arrive. No WebSocket or streaming connection is introduced.</p>
   </section>
 
   <!-- DECISIONS -->
   <section class="layer">
     <div class="layer-head"><span class="layer-num">★</span><h2>Settled decisions</h2></div>
     <ul class="log">
-      <li><span class="k">ingestion</span><span class="v"><b>JSON-LD as clean input</b> where present; every recipe gets exactly one LLM enrichment pass. YouTube link-in-description → <code>web_fetch</code>. Re-saves dedupe via unique normalized <code>source_url</code> + upsert.</span></li>
+      <li><span class="k">ingestion</span><span class="v"><b>Durable Postgres-backed handoff</b> for extension saves, processed by one in-process worker. JSON-LD remains clean input where present; every recipe gets exactly one LLM enrichment pass. Re-saves dedupe via normalized <code>source_url</code> + upsert.</span></li>
+      <li><span class="k">ingest failures</span><span class="v">Lifecycle state stays outside <code>recipes</code>. Failed jobs retain their snapshot and surface with Retry/Dismiss; successful jobs clear HTML. Only interrupted-job recovery is automatic initially.</span></li>
       <li><span class="k">macros</span><span class="v"><b>LLM ballpark, in-context arithmetic</b> (no <code>code_execution</code>), at ingestion, per serving, <code>estimated</code> flag. No nutrition DB.</span></li>
       <li><span class="k">tags</span><span class="v"><b>Controlled vocabulary only</b>, 3 axes, new tags auto-approved; merge/rename is the cleanup mechanism. Injected in prompt (not a <code>list_tags</code> tool — yet).</span></li>
       <li><span class="k">embedding</span><span class="v"><b>title + defining ingredients + tags</b>; Claude flags defining ones; dedicated embedding model; at ingestion, from day one.</span></li>
@@ -451,6 +510,7 @@ save_grocery_list(meal_plan_id, items[]) → grocery_list_id</pre>
       <li><span class="k">models</span><span class="v">Extraction: try <b>Sonnet / Haiku</b> first (test accuracy). Agent: Claude. Embeddings: dedicated model.</span></li>
       <li><span class="k">stack</span><span class="v"><b>Postgres + pgvector</b>, MV3 extension, minimal / no auth (single-user).</span></li>
     </ul>
+    <p>The historical M0–M8 execution plan's queue prohibition is superseded only for this narrow ingestion lifecycle. General-purpose queues and external queue infrastructure remain out of scope.</p>
   </section>
 
   <!-- RISKS -->
@@ -479,7 +539,7 @@ save_grocery_list(meal_plan_id, items[]) → grocery_list_id</pre>
 
   <footer>
     <span>Recipe Library · architecture reference</span>
-    <span>capture → library → agent → chat</span>
+    <span>capture → durable queue → library → agent → chat</span>
   </footer>
 
 </div>

@@ -2,10 +2,12 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import express from "express";
 import { config } from "./config.js";
-import { query } from "./db.js";
+import { pool, query } from "./db.js";
+import { ingestionWorker } from "./ingest/worker.js";
 import { chatRouter } from "./routes/chat.js";
 import { groceryRouter } from "./routes/grocery.js";
 import { ingestRouter } from "./routes/ingest.js";
+import { ingestionJobsRouter } from "./routes/ingestionJobs.js";
 import { pantryRouter } from "./routes/pantry.js";
 import { recipesRouter } from "./routes/recipes.js";
 import { tagsRouter } from "./routes/tags.js";
@@ -28,6 +30,7 @@ app.use((req, res, next) => {
 });
 
 app.use("/api", ingestRouter);
+app.use("/api", ingestionJobsRouter);
 app.use("/api", chatRouter);
 app.use("/api", recipesRouter);
 app.use("/api", tagsRouter);
@@ -56,6 +59,28 @@ app.get("/health", async (_req, res) => {
   res.status(db ? 200 : 503).json({ ok: db, db });
 });
 
-app.listen(config.port, () => {
+const server = app.listen(config.port, () => {
   console.log(`server listening on http://localhost:${config.port}`);
+  void ingestionWorker.start().catch((error) => {
+    console.error("ingestion worker failed to start:", error);
+  });
 });
+
+let shuttingDown = false;
+async function shutdown(signal: string): Promise<void> {
+  if (shuttingDown) return;
+  shuttingDown = true;
+  console.log(`${signal}: shutting down`);
+  await new Promise<void>((resolve) => server.close(() => resolve()));
+  await ingestionWorker.stop();
+  await pool.end();
+}
+
+for (const signal of ["SIGINT", "SIGTERM"] as const) {
+  process.once(signal, () => {
+    void shutdown(signal).catch((error) => {
+      console.error("shutdown failed:", error);
+      process.exitCode = 1;
+    });
+  });
+}

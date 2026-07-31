@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { api, type RecipeDetail, type RecipeSummary } from "../api";
+import { api, type IngestionJob, type RecipeDetail, type RecipeSummary } from "../api";
 import { EstBadge, RecipeDetailView } from "../components";
 
 function fileToBase64(file: File): Promise<string> {
@@ -17,8 +17,11 @@ function fileToBase64(file: File): Promise<string> {
 
 export function Library({ active }: { active: boolean }) {
   const [recipes, setRecipes] = useState<RecipeSummary[] | null>(null);
+  const [jobs, setJobs] = useState<IngestionJob[]>([]);
   const [detail, setDetail] = useState<RecipeDetail | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [jobError, setJobError] = useState<string | null>(null);
+  const [mutatingJobIds, setMutatingJobIds] = useState<Set<string>>(new Set());
   const [q, setQ] = useState("");
   const [activeTags, setActiveTags] = useState<Set<string>>(new Set()); // "category:value"
   const [uploading, setUploading] = useState(false);
@@ -26,14 +29,55 @@ export function Library({ active }: { active: boolean }) {
   const [uploadNotice, setUploadNotice] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  const load = () => {
-    api.recipes().then(setRecipes).catch((e) => setError(e.message));
+  const load = async () => {
+    try {
+      const [nextRecipes, nextJobs] = await Promise.all([api.recipes(), api.ingestionJobs()]);
+      setRecipes(nextRecipes);
+      setJobs(nextJobs);
+      setError(null);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "could not load the library");
+    }
   };
-  // refresh whenever the tab becomes visible (screens stay mounted now)
+
+  // Refresh on entry, then poll only while this tab and the browser document are
+  // visible and the server reports work that can still change state.
   useEffect(() => {
-    if (active) load();
+    if (!active) return;
+    void load();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [active]);
+
+  const hasActiveJobs = jobs.some((job) => job.status === "queued" || job.status === "processing");
+  useEffect(() => {
+    if (!active || !hasActiveJobs) return;
+
+    let timer: number | undefined;
+    let cancelled = false;
+    const schedule = () => {
+      window.clearTimeout(timer);
+      if (!cancelled && document.visibilityState === "visible") {
+        timer = window.setTimeout(() => {
+          void load().finally(schedule);
+        }, 2_000);
+      }
+    };
+    const onVisibilityChange = () => {
+      window.clearTimeout(timer);
+      if (document.visibilityState === "visible") {
+        void load().finally(schedule);
+      }
+    };
+
+    schedule();
+    document.addEventListener("visibilitychange", onVisibilityChange);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+      document.removeEventListener("visibilitychange", onVisibilityChange);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [active, hasActiveJobs]);
 
   // Only offer tags that are actually in use, grouped for the filter row.
   const usedTags = useMemo(() => {
@@ -116,6 +160,28 @@ export function Library({ active }: { active: boolean }) {
     }
   };
 
+  const mutateJob = async (job: IngestionJob, action: "retry" | "dismiss") => {
+    setMutatingJobIds((current) => new Set(current).add(job.id));
+    setJobError(null);
+    try {
+      if (action === "retry") {
+        const next = await api.retryIngestionJob(job.id);
+        setJobs((current) => current.map((item) => item.id === job.id ? next : item));
+      } else {
+        await api.dismissIngestionJob(job.id);
+        setJobs((current) => current.filter((item) => item.id !== job.id));
+      }
+    } catch (e) {
+      setJobError(e instanceof Error ? e.message : `could not ${action} extraction`);
+    } finally {
+      setMutatingJobIds((current) => {
+        const next = new Set(current);
+        next.delete(job.id);
+        return next;
+      });
+    }
+  };
+
   if (error) return <div className="container empty">Something went wrong: {error}</div>;
   if (!recipes) return <div className="container empty">Loading…</div>;
 
@@ -169,6 +235,11 @@ export function Library({ active }: { active: boolean }) {
             {uploadNotice} <button className="link-btn" onClick={() => setUploadNotice(null)}>dismiss</button>
           </div>
         )}
+        {jobError && (
+          <div className="upload-error" role="alert">
+            {jobError} <button className="link-btn" onClick={() => setJobError(null)}>dismiss</button>
+          </div>
+        )}
         <div className="filter-row">
           {usedTags.map(([key, t]) => (
             <button
@@ -194,13 +265,50 @@ export function Library({ active }: { active: boolean }) {
         </div>
       </div>
 
-      {recipes.length === 0 && (
+      {recipes.length === 0 && jobs.length === 0 && (
         <div className="empty">No recipes yet — save one with the browser extension.</div>
       )}
-      {recipes.length > 0 && filtered.length === 0 && (
+      {jobs.length === 0 && recipes.length > 0 && filtered.length === 0 && (
         <div className="empty">Nothing matches those filters.</div>
       )}
       <div className="lib-grid">
+        {jobs.map((job) => {
+          const failed = job.status === "failed";
+          const busy = mutatingJobIds.has(job.id);
+          return (
+            <article
+              className={`lib-card ingestion-card ${failed ? "failed" : `pending ${job.status}`}`}
+              key={`job:${job.id}`}
+              aria-live="polite"
+            >
+              <div className="ingestion-status">
+                <span aria-hidden="true">{failed ? "!" : job.status === "processing" ? "↻" : "…"}</span>
+                {failed ? "Extraction failed" : job.status === "processing" ? "Extracting recipe" : "Queued for extraction"}
+              </div>
+              <h3>{job.captured_title}</h3>
+              <div className="ingestion-source">
+                {job.source_type === "youtube" ? "YouTube" : new URL(job.source_url).hostname}
+              </div>
+              {failed ? (
+                <>
+                  <p className="ingestion-message">
+                    {job.error_message ?? "Recipe extraction failed. Please retry this capture."}
+                  </p>
+                  <div className="ingestion-actions">
+                    <button className="mini-btn" disabled={busy} onClick={() => void mutateJob(job, "retry")}>
+                      {busy ? "Retrying…" : "Retry"}
+                    </button>
+                    <button className="mini-btn ghost" disabled={busy} onClick={() => void mutateJob(job, "dismiss")}>
+                      Dismiss
+                    </button>
+                  </div>
+                </>
+              ) : (
+                <p className="ingestion-message">This card will become your saved recipe when extraction finishes.</p>
+              )}
+            </article>
+          );
+        })}
         {filtered.map((r) => {
           const open = () => api.recipe(r.id).then(setDetail).catch((e) => setError(e.message));
           return (

@@ -5,6 +5,31 @@ export interface Settings {
   apiKey: string;
 }
 
+export interface QueueRecipeMessage {
+  type: "queue-recipe";
+  tabId: number;
+  url: string;
+  title?: string;
+  /** Present for a social capture already reviewed in the popup. Ordinary
+   *  page HTML is captured by the background worker; YouTube needs no HTML. */
+  html?: string;
+}
+
+export interface AcceptedIngestionJob {
+  id: string;
+  captured_title: string;
+  status: "queued" | "processing";
+  disposition: "created" | "existing" | "requeued";
+}
+
+export type QueueRecipeResponse =
+  | { ok: true; job: AcceptedIngestionJob }
+  | {
+      ok: false;
+      code: "NO_API_KEY" | "AUTH" | "CAPTURE_FAILED" | "PAGE_CHANGED" | "NETWORK" | "SERVER";
+      message: string;
+    };
+
 export const DEFAULT_API_BASE = "http://localhost:3001";
 
 export async function getSettings(): Promise<Settings> {

@@ -1,9 +1,10 @@
 # Recipe Library — Chrome extension
 
-One-click capture: sends the current tab to the local ingestion API.
-YouTube tabs send just the URL (the server pulls metadata/transcript);
-all other tabs also send the rendered page HTML, which sidesteps
-bot-walled recipe sites.
+One-click capture: the extension's background service worker snapshots the current
+tab and persists a job to the local ingestion API. Once the popup says **Queued ✓**,
+the popup and source tab are no longer part of extraction. YouTube tabs send just the
+URL (the server pulls metadata/transcript); other ordinary tabs send rendered page
+HTML, which sidesteps bot-walled recipe sites.
 
 ## Build
 
@@ -27,7 +28,11 @@ Re-run the build after code changes, then hit ↻ on the extension card.
 
 ## Notes
 
-- The save request runs in the popup — keep the popup open until the
-  status flips to “Saved ✓” (enrichment takes ~10–30 s).
+- Ordinary pages and YouTube are fire-and-forget after the quick **Queued ✓** handoff.
+- Facebook/Instagram/Threads still generate a preview in the popup before queueing;
+  keep the popup open for that preview, then confirm. Their confirmation redesign is
+  intentionally deferred until the queue architecture is stable.
+- A toolbar badge shows `…` during handoff, briefly `✓` when the server accepts the
+  job, and `!` when capture/delivery fails.
 - Non-localhost API hosts additionally need a matching entry in
   `manifest.json` → `host_permissions`.

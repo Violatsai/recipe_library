@@ -11,12 +11,12 @@ A personal system that turns bookmarked recipes — from web pages and YouTube �
 ## Data flow
 
 ```
-Capture  ──▶  Library  ──▶  Agent + Tools  ──▶  Chat UI
+Capture  ──▶  Durable ingest queue  ──▶  Library  ──▶  Agent + Tools  ──▶  Chat UI
 ```
 
 | Layer | Role |
 |---|---|
-| **01 · Capture** | Extension grabs a page or video; ingestion extracts, scores macros, tags, embeds. |
+| **01 · Capture** | Extension snapshots a page or video and durably queues it; server-side ingestion extracts, scores macros, tags, and embeds. |
 | **02 · Library** | Structured recipes, ingredients, taxonomy, meal plans — the shared core. |
 | **03 · Agent + Tools** | One toolset over the library: search, plan, build a grocery list. |
 | **04 · Chat UI** | One thread for "what can I cook?" and "plan my week." |
@@ -25,7 +25,55 @@ Capture  ──▶  Library  ──▶  Agent + Tools  ──▶  Chat UI
 
 ## 01 · Capture & ingestion
 
-The extension sends raw source content to an ingestion worker. Three source types collapse into **two extraction strategies** — fetch a clean page, or extract from a transcript — so most of the pipeline is shared.
+The extension snapshots raw source content and submits it to a durable, Postgres-backed
+ingestion queue. The server acknowledges the persisted job immediately; a single in-process
+worker then performs extraction independently of the popup and browser tab. Three source
+types collapse into **two extraction strategies** — fetch a clean page, or extract from a
+transcript — so most of the pipeline is shared.
+
+### Durable asynchronous handoff
+
+> **Implementation status:** the durable job schema/API, concurrency-one worker, interrupted-job
+> recovery, sanitized failure recording, atomic multi-recipe persistence, extension background
+> handoff, Library lifecycle cards, visibility-aware polling, and queued smoke path are implemented.
+
+```
+extension captures URL/title/HTML
+          │
+          ▼
+POST ingestion job ──▶ persist queued row ──▶ return 202
+                                 │
+                                 ▼
+                       one in-process worker
+                                 │
+                   ┌─────────────┴─────────────┐
+                   ▼                           ▼
+              succeeded                    failed
+                   │                           │
+          normal recipe card          retryable error card
+```
+
+The durable boundary is the committed ingestion-job row. The extension's Manifest V3
+background service worker only delivers the captured snapshot and waits for the quick `202`
+acknowledgement; it does **not** own the long-running Claude/Voyage work. Once the job is
+accepted, the popup may close and the user may navigate away without cancelling extraction.
+
+The worker is deliberately small: one worker inside the existing server process, concurrency
+one, with Postgres as its only queue store. There is no Redis, BullMQ, separate worker service,
+or general-purpose queue framework. Delivery is at least once; normalized-URL upserts make
+reprocessing safe. Jobs left in `processing` by a server interruption are returned to `queued`
+on startup.
+
+The first queued-ingestion release applies to extension saves from web pages and YouTube.
+Photo upload and bookmark bulk import continue to call the synchronous pipeline directly.
+Facebook/Instagram/Threads keep their existing expand → preview → explicit-confirmation flow;
+only the work after confirmation is queued. Redesigning that confirmation experience is
+explicitly deferred until the queue architecture is stable.
+
+Job input is retained while a job is queued, processing, or failed so a retry never depends on
+the original tab. Successful jobs clear captured HTML to limit database growth. There is no
+automatic retry in the first release beyond recovery of interrupted `processing` jobs: a
+failed Library card offers explicit **Retry** and **Dismiss** actions.
 
 ### Source decision tree
 
@@ -106,6 +154,41 @@ ingredients                      -- recipe_id → recipes
   unit        text               -- 'g','ml','clove','tbsp' · nullable
   raw_text    text               -- original line, fallback when parse fails
 ```
+
+### Ingestion lifecycle
+
+In-progress and failed captures are not incomplete `recipes` rows. Keeping lifecycle state in
+separate tables prevents placeholders from leaking into semantic search, agent results, meal
+plans, or recipe-detail queries.
+
+```
+ingestion_jobs
+  id                 uuid pk
+  normalized_url     text unique    -- one durable lifecycle record per captured source
+  source_url          text
+  source_type         text           -- 'web' | 'youtube'
+  captured_title      text
+  source_html         text nullable  -- retained until success; null for URL-only sources
+  status              text           -- 'queued' | 'processing' | 'succeeded' | 'failed'
+  attempt_count       int default 0
+  error_code          text nullable
+  error_message       text nullable  -- sanitized, safe to display in the Library
+  submitted_at        timestamptz
+  started_at          timestamptz nullable
+  finished_at         timestamptz nullable
+  updated_at          timestamptz
+
+ingestion_job_recipes
+  job_id              uuid fk → ingestion_jobs
+  recipe_id           uuid fk → recipes
+  pk(job_id, recipe_id)             -- one source may produce several recipes
+```
+
+Submitting an already-active normalized URL returns its existing job. Submitting a failed or
+completed URL requeues that lifecycle record with the newest captured snapshot. A worker claim
+is atomic; a job reaches `succeeded` only after every recipe produced by the source has been
+embedded and persisted. Multi-recipe persistence is one transaction so a failed job cannot
+leave a partially saved set behind.
 
 ### Taxonomy — controlled vocabulary
 
@@ -192,13 +275,20 @@ save_grocery_list(meal_plan_id, items[]) → grocery_list_id
 
 A single web app; chat is the entry point for both retrieval and planning. It renders the agent's tool results: clickable recipe cards (→ detail overlay), a week's plan with hyperlinked recipes, and a grocery checklist with two views — by store section (persisted checkboxes) or by recipe (derived, read-only). Beyond chat: a **Library** tab (search by title/ingredient, tag filters, delete), a **Plans** tab (persistent home for meal plans + grocery lists, with editable title/date), and **Settings** (pantry + tag management).
 
+While the Library is visible, it polls only while queued or processing jobs exist. Queued and
+processing jobs render as labeled placeholder cards; failed jobs render as clearly labeled
+error cards with Retry and Dismiss. Status uses text/icons as well as color. A succeeded
+placeholder disappears as its one or more ordinary recipe cards arrive. No WebSocket,
+streaming response, or persistent client connection is introduced.
+
 ---
 
 ## Settled decisions
 
 | Area | Decision |
 |---|---|
-| **ingestion** | JSON-LD as clean input where present; every recipe gets exactly one LLM enrichment pass. YouTube link-in-description → `web_fetch`. Re-saves dedupe via unique normalized `source_url` + upsert. |
+| **ingestion** | Extension saves use a durable Postgres-backed job and a concurrency-one in-process worker; the browser is released after the server persists the job. JSON-LD is clean input where present; every recipe gets exactly one LLM enrichment pass. YouTube link-in-description → `web_fetch`. Re-saves dedupe via unique normalized `source_url` + upsert. |
+| **ingestion failures** | Lifecycle state lives outside `recipes`. Failed captures retain their snapshot and surface in the Library with Retry/Dismiss; successful jobs clear captured HTML. Only interrupted-job recovery is automatic initially. |
 | **macros** | LLM ballpark, in-context arithmetic (no `code_execution`), at ingestion, per serving, `estimated` flag. No nutrition DB. |
 | **tags** | Controlled vocabulary only, 3 axes, new tags auto-approved; merge/rename is the cleanup mechanism. Injected in prompt (not a `list_tags` tool — yet). |
 | **embedding** | title + defining ingredients + tags; Claude flags defining ones; dedicated embedding model; at ingestion, from day one. |
@@ -206,6 +296,11 @@ A single web app; chat is the entry point for both retrieval and planning. It re
 | **grocery** | Deterministic scaling in tool; fuzzy merge + staple removal in one agent pass. |
 | **models** | Extraction: try Sonnet / Haiku first (test accuracy). Agent: Claude. Embeddings: dedicated model. |
 | **stack** | Postgres + pgvector, MV3 extension, minimal / no auth (single-user). |
+
+The original M0–M8 execution plan describes synchronous ingestion and prohibits job queues.
+It remains an accurate historical build record, but this narrowly scoped durable-ingestion
+decision supersedes that prohibition. General-purpose queues and external queue infrastructure
+remain out of scope.
 
 ---
 

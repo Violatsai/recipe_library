@@ -45,6 +45,22 @@ export interface IngestResult {
   partial: boolean;
 }
 
+export interface IngestionJob {
+  id: string;
+  source_url: string;
+  source_type: "web" | "youtube";
+  captured_title: string;
+  status: "queued" | "processing" | "failed";
+  attempt_count: number;
+  error_code: string | null;
+  error_message: string | null;
+  submitted_at: string;
+  started_at: string | null;
+  finished_at: string | null;
+  updated_at: string;
+  recipe_ids: string[];
+}
+
 export interface SearchResult {
   id: string;
   title: string;
@@ -127,6 +143,11 @@ export const api = {
   recipes: () => req<RecipeSummary[]>("/api/recipes"),
   recipe: (id: string) => req<RecipeDetail>(`/api/recipes/${id}`),
   deleteRecipe: (id: string) => req(`/api/recipes/${id}`, { method: "DELETE" }),
+  ingestionJobs: () => req<IngestionJob[]>("/api/ingestion-jobs"),
+  retryIngestionJob: (id: string) =>
+    req<IngestionJob>(`/api/ingestion-jobs/${id}/retry`, { method: "POST" }),
+  dismissIngestionJob: (id: string) =>
+    req<{ ok: true }>(`/api/ingestion-jobs/${id}`, { method: "DELETE" }),
   ingestPhoto: (imageBase64: string, mediaType: string) =>
     req<IngestResult[]>("/api/ingest-photo", { method: "POST", body: JSON.stringify({ imageBase64, mediaType }) }),
   tags: () => req<Tag[]>("/api/tags"),

@@ -1,14 +1,19 @@
-import { getSettings, isSocialCaptionSite, isYouTube } from "./shared.js";
+import {
+  getSettings,
+  isSocialCaptionSite,
+  type QueueRecipeMessage,
+  type QueueRecipeResponse,
+} from "./shared.js";
 
 /**
  * Popup save flow:
- *   YouTube tab        → POST { url } to /api/ingest directly (server handles
- *                         meta/link/transcript; no client-side capture, so no
- *                         staleness risk).
+ *   YouTube tab        → hand { url, title } to the background worker; it
+ *                         persists a server-side job without capturing HTML.
  *   social-caption tab → expand any collapsed caption, capture HTML, then
  *                         POST to /api/ingest-preview and show what was
  *                         found before saving anything. The user confirms
- *                         or cancels.
+ *                         or cancels. Confirmation hands the reviewed snapshot
+ *                         to the background worker.
  *                         (Facebook/Instagram/Threads: these apps hydrate
  *                         post content asynchronously and can leave a
  *                         PREVIOUS post's content in the DOM while a new one
@@ -24,10 +29,9 @@ import { getSettings, isSocialCaptionSite, isYouTube } from "./shared.js";
  *                         (see the standing hint below); the preview step
  *                         is the safety net for anything that still slips
  *                         through.)
- *   any other tab      → POST { url, html } directly, same as before.
- *
- * Known limitation (accepted in the plan): the fetch runs in the popup, so the
- * popup must stay open until the response arrives. The hint text tells the user.
+ *   any other tab      → background worker snapshots the tab and persists a
+ *                         server-side job. The popup/tab no longer owns the
+ *                         long-running extraction request.
  */
 
 const saveBtn = document.getElementById("save") as HTMLButtonElement;
@@ -44,15 +48,7 @@ function setStatus(kind: "ok" | "err" | "busy" | "", text: string): void {
   statusEl.textContent = text;
 }
 
-// The fetch runs in the popup itself, so it dies the moment the popup
-// closes — including just switching tabs, which steals focus and closes it.
-const STAY_HINT = "Stay on this tab and keep this popup open — switching tabs cancels the save.";
-
-interface IngestResult {
-  status: "saved" | "updated";
-  title: string;
-  partial: boolean;
-}
+const SOCIAL_STAY_HINT = "Keep this popup open while the social-post preview is generated.";
 
 interface IngestPreviewResult {
   title: string;
@@ -63,9 +59,14 @@ interface IngestError {
   error?: string;
 }
 
-interface IngestBody {
+interface PreviewBody {
   url: string;
-  html?: string;
+  html: string;
+}
+
+interface PendingSocialCapture extends PreviewBody {
+  tabId: number;
+  title?: string;
 }
 
 async function activeTab(): Promise<chrome.tabs.Tab | undefined> {
@@ -142,7 +143,7 @@ async function capturePageHtml(tabId: number): Promise<string> {
   return html;
 }
 
-let pendingBody: IngestBody | null = null;
+let pendingCapture: PendingSocialCapture | null = null;
 let currentTabUrl = "";
 
 /** Standing reminder for social-caption sites — since the popup can't safely
@@ -156,8 +157,8 @@ function setSocialHint(url: string): void {
     : "";
 }
 
-function showPreview(body: IngestBody, results: IngestPreviewResult[]): void {
-  pendingBody = body;
+function showPreview(capture: PendingSocialCapture, results: IngestPreviewResult[]): void {
+  pendingCapture = capture;
   previewTitlesEl.innerHTML = "";
   for (const r of results) {
     const li = document.createElement("li");
@@ -170,57 +171,42 @@ function showPreview(body: IngestBody, results: IngestPreviewResult[]): void {
 }
 
 function resetToIdle(): void {
-  pendingBody = null;
+  pendingCapture = null;
   previewEl.hidden = true;
   saveBtn.hidden = false;
   saveBtn.disabled = false;
   setSocialHint(currentTabUrl);
 }
 
-function reportIngestResults(results: IngestResult[]): void {
-  if (results.length === 1) {
-    const r = results[0]!;
-    const partialNote = r.partial ? " — partial extraction, source was thin" : "";
-    setStatus(
-      "ok",
-      r.status === "updated" ? `Updated ✓ ${r.title} (already in library)` : `Saved ✓ ${r.title}${partialNote}`,
-    );
-  } else {
-    const saved = results.filter((r) => r.status === "saved").length;
-    const updated = results.length - saved;
-    const counts = [saved && `${saved} saved`, updated && `${updated} updated`].filter(Boolean).join(", ");
-    setStatus("ok", `${results.length} recipes found ✓ (${counts}): ${results.map((r) => r.title).join(", ")}`);
-  }
-}
-
-async function doFullSave(body: IngestBody): Promise<void> {
-  const settings = await getSettings();
+async function queueCapture(message: QueueRecipeMessage): Promise<void> {
   try {
-    const resp = await fetch(`${settings.apiBase}/api/ingest`, {
-      method: "POST",
-      headers: { "content-type": "application/json", "x-api-key": settings.apiKey },
-      body: JSON.stringify(body),
-    });
-    const data = (await resp.json().catch(() => ({}))) as IngestResult[] | IngestError;
-    if (resp.status === 401) {
-      setStatus("err", "Invalid API key — check settings.");
-    } else if (!resp.ok) {
-      setStatus("err", (data as IngestError).error ?? `Server error (HTTP ${resp.status}).`);
+    const response = await chrome.runtime.sendMessage(message) as QueueRecipeResponse | undefined;
+    if (!response) {
+      setStatus("err", "The background worker did not respond. Reload the extension and try again.");
+    } else if (!response.ok) {
+      setStatus("err", response.message);
     } else {
-      reportIngestResults(data as IngestResult[]);
+      const alreadyRunning = response.job.disposition === "existing";
+      setStatus(
+        "ok",
+        alreadyRunning
+          ? `Already extracting ✓ ${response.job.captured_title}`
+          : `Queued ✓ ${response.job.captured_title}`,
+      );
+      hintEl.textContent = "Extraction continues in the background — you can navigate away.";
     }
   } catch {
-    setStatus("err", "Could not reach the server — is it running?");
+    setStatus("err", "Could not contact the extension background worker. Reload it and try again.");
   }
 }
 
-async function doPreview(body: IngestBody): Promise<void> {
+async function doPreview(capture: PendingSocialCapture): Promise<void> {
   const settings = await getSettings();
   try {
     const resp = await fetch(`${settings.apiBase}/api/ingest-preview`, {
       method: "POST",
       headers: { "content-type": "application/json", "x-api-key": settings.apiKey },
-      body: JSON.stringify(body),
+      body: JSON.stringify({ url: capture.url, html: capture.html } satisfies PreviewBody),
     });
     const data = (await resp.json().catch(() => ({}))) as IngestPreviewResult[] | IngestError;
     if (resp.status === 401) {
@@ -233,7 +219,7 @@ async function doPreview(body: IngestBody): Promise<void> {
         setStatus("err", "No recipe found on this page.");
       } else {
         setStatus("", "");
-        showPreview(body, results);
+        showPreview(capture, results);
       }
     }
   } catch {
@@ -262,18 +248,15 @@ async function save(): Promise<void> {
 
   const social = isSocialCaptionSite(tab.url);
   saveBtn.disabled = true;
-  setStatus("busy", social ? "Checking the page… this can take ~20 s." : "Saving… this can take ~15 s.");
-  hintEl.textContent = STAY_HINT;
+  setStatus("busy", social ? "Checking the page… this can take ~20 s." : "Adding to extraction queue…");
+  hintEl.textContent = social ? SOCIAL_STAY_HINT : "Capturing the page for background extraction…";
 
   try {
-    if (isYouTube(tab.url)) {
-      await doFullSave({ url: tab.url });
-      saveBtn.disabled = false;
-    } else if (social) {
+    if (social) {
       await expandCaptions(tab.id);
       const html = await capturePageHtml(tab.id);
       setStatus("busy", "Checking what's on the page…");
-      await doPreview({ url: tab.url, html });
+      await doPreview({ tabId: tab.id, url: tab.url, title: tab.title, html });
       // showPreview()/doPreview()'s error path both leave saveBtn visible —
       // re-enable it unless a preview is now showing (save stays hidden then).
       if (previewEl.hidden) {
@@ -281,8 +264,7 @@ async function save(): Promise<void> {
         setSocialHint(tab.url);
       }
     } else {
-      const html = await capturePageHtml(tab.id);
-      await doFullSave({ url: tab.url, html });
+      await queueCapture({ type: "queue-recipe", tabId: tab.id, url: tab.url, title: tab.title });
       saveBtn.disabled = false;
     }
   } catch (err) {
@@ -293,14 +275,20 @@ async function save(): Promise<void> {
 }
 
 async function confirmSave(): Promise<void> {
-  if (!pendingBody) return;
-  const body = pendingBody;
+  if (!pendingCapture) return;
+  const capture = pendingCapture;
   previewEl.hidden = true;
   saveBtn.hidden = false;
   saveBtn.disabled = true;
-  setStatus("busy", "Saving…");
-  await doFullSave(body);
-  pendingBody = null;
+  setStatus("busy", "Adding to extraction queue…");
+  await queueCapture({
+    type: "queue-recipe",
+    tabId: capture.tabId,
+    url: capture.url,
+    title: capture.title,
+    html: capture.html,
+  });
+  pendingCapture = null;
   saveBtn.disabled = false;
 }
 

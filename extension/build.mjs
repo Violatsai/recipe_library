@@ -3,7 +3,7 @@ import { copyFileSync, mkdirSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
-/** Bundle popup/options to extension/dist/ and copy the static files.
+/** Bundle popup/options/background to extension/dist/ and copy the static files.
  *  Load `extension/dist` as the unpacked extension in Chrome. */
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -11,7 +11,11 @@ const dist = join(here, "dist");
 mkdirSync(dist, { recursive: true });
 
 await build({
-  entryPoints: [join(here, "src/popup.ts"), join(here, "src/options.ts")],
+  entryPoints: [
+    join(here, "src/popup.ts"),
+    join(here, "src/options.ts"),
+    join(here, "src/background.ts"),
+  ],
   outdir: dist,
   bundle: true,
   format: "iife",

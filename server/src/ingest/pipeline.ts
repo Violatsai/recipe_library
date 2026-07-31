@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import type { PoolClient } from "pg";
 import { query, withTransaction } from "../db.js";
 import { embedText, toVectorLiteral } from "./embed.js";
 import { enrich, enrichFromImage, type ApprovedTags, type EnrichmentData } from "./enrich.js";
@@ -17,6 +18,13 @@ const UPLOADS_DIR = path.resolve(fileURLToPath(import.meta.url), "../../../uploa
 export class NotARecipeError extends Error {
   constructor() {
     super("no recipe could be extracted from this photo");
+  }
+}
+
+/** Thrown when a text/video enrichment returns no recipe entries at all. */
+export class NoRecipesExtractedError extends Error {
+  constructor() {
+    super("no recipe could be extracted from this source");
   }
 }
 
@@ -90,26 +98,36 @@ function pageContent(html: string, url: string): string {
   return `Source URL: ${url}\n\nArticle title: ${r.title}\n\nArticle text:\n${r.textContent}`;
 }
 
-/** Shared core: embed → transactional upsert, given already-enriched data.
- *  `resolveSourceDetail` runs on the result so callers can set provenance
- *  from the result (e.g. which source Claude actually used). */
-async function persist(args: {
+/** One enriched recipe waiting for embedding + atomic persistence. */
+export interface PersistRecipeInput {
   normalizedUrl: string;
   source: "web" | "youtube" | "photo";
   resolveSourceDetail: (data: EnrichmentData) => string | null;
   data: EnrichmentData;
   description: string;
   photoPath?: string | null;
-}): Promise<IngestResult> {
+}
+
+export interface RecipePersistenceDependencies {
+  embed: (text: string, kind: "document") => Promise<number[]>;
+  transaction: <T>(fn: (client: PoolClient) => Promise<T>) => Promise<T>;
+}
+
+interface PreparedRecipe extends PersistRecipeInput {
+  sourceDetail: string | null;
+  embeddingLiteral: string;
+}
+
+/** Persist one already-prepared recipe using the caller's transaction. */
+async function persistPreparedRecipe(
+  client: PoolClient,
+  args: PreparedRecipe,
+): Promise<IngestResult> {
   const data = args.data;
-  const sourceDetail = args.resolveSourceDetail(data);
-  const vector = await embedText(buildEmbedString(data), "document");
-  const embLiteral = toVectorLiteral(vector);
   const macros = data.macros_per_serving;
 
-  const { recipeId, inserted } = await withTransaction(async (client) => {
-    const upsert = await client.query<{ id: string; inserted: boolean }>(
-      `INSERT INTO recipes
+  const upsert = await client.query<{ id: string; inserted: boolean }>(
+    `INSERT INTO recipes
          (title, source_url, source_type, source_detail, servings, total_time_min,
           steps, description, kcal, protein_g, carbs_g, fat_g,
           embedding, extraction_partial, photo_path, updated_at)
@@ -127,7 +145,7 @@ async function persist(args: {
         data.title,
         args.normalizedUrl,
         args.source,
-        sourceDetail,
+        args.sourceDetail,
         data.servings,
         data.total_time_min,
         JSON.stringify(data.steps),
@@ -136,60 +154,87 @@ async function persist(args: {
         macros?.protein_g ?? null,
         macros?.carbs_g ?? null,
         macros?.fat_g ?? null,
-        embLiteral,
+        args.embeddingLiteral,
         data.partial,
         args.photoPath ?? null,
-      ],
+    ],
+  );
+  const row = upsert.rows[0]!;
+  const recipeId = row.id;
+
+  // ingredients: delete + reinsert
+  await client.query("DELETE FROM ingredients WHERE recipe_id=$1", [recipeId]);
+  for (const ing of data.ingredients) {
+    await client.query(
+      "INSERT INTO ingredients (recipe_id, name, quantity, unit, raw_text) VALUES ($1,$2,$3,$4,$5)",
+      [recipeId, ing.name, ing.quantity, ing.unit, ing.raw_text],
     );
-    const row = upsert.rows[0]!;
-    const rid = row.id;
+  }
 
-    // ingredients: delete + reinsert
-    await client.query("DELETE FROM ingredients WHERE recipe_id=$1", [rid]);
-    for (const ing of data.ingredients) {
+  // tags: assemble all (category,value) pairs, auto-approve unknowns, replace recipe_tags
+  const pairs: { category: string; value: string }[] = [
+    ...data.tags.cuisine.map((v) => ({ category: "cuisine", value: v })),
+    ...data.tags.dish_type.map((v) => ({ category: "dish_type", value: v })),
+    ...data.tags.dietary.map((v) => ({ category: "dietary", value: v })),
+    ...data.new_tags,
+  ];
+  await client.query("DELETE FROM recipe_tags WHERE recipe_id=$1", [recipeId]);
+  for (const p of pairs) {
+    await client.query(
+      "INSERT INTO tags (category, value) VALUES ($1,$2) ON CONFLICT (category, value) DO NOTHING",
+      [p.category, p.value],
+    );
+    const t = await client.query<{ id: string }>(
+      "SELECT id FROM tags WHERE category=$1 AND value=$2",
+      [p.category, p.value],
+    );
+    const tagId = t.rows[0]?.id;
+    if (tagId) {
       await client.query(
-        "INSERT INTO ingredients (recipe_id, name, quantity, unit, raw_text) VALUES ($1,$2,$3,$4,$5)",
-        [rid, ing.name, ing.quantity, ing.unit, ing.raw_text],
+        "INSERT INTO recipe_tags (recipe_id, tag_id) VALUES ($1,$2) ON CONFLICT DO NOTHING",
+        [recipeId, tagId],
       );
     }
-
-    // tags: assemble all (category,value) pairs, auto-approve unknowns, replace recipe_tags
-    const pairs: { category: string; value: string }[] = [
-      ...data.tags.cuisine.map((v) => ({ category: "cuisine", value: v })),
-      ...data.tags.dish_type.map((v) => ({ category: "dish_type", value: v })),
-      ...data.tags.dietary.map((v) => ({ category: "dietary", value: v })),
-      ...data.new_tags,
-    ];
-    await client.query("DELETE FROM recipe_tags WHERE recipe_id=$1", [rid]);
-    for (const p of pairs) {
-      await client.query(
-        "INSERT INTO tags (category, value) VALUES ($1,$2) ON CONFLICT (category, value) DO NOTHING",
-        [p.category, p.value],
-      );
-      const t = await client.query<{ id: string }>(
-        "SELECT id FROM tags WHERE category=$1 AND value=$2",
-        [p.category, p.value],
-      );
-      const tagId = t.rows[0]?.id;
-      if (tagId) {
-        await client.query(
-          "INSERT INTO recipe_tags (recipe_id, tag_id) VALUES ($1,$2) ON CONFLICT DO NOTHING",
-          [rid, tagId],
-        );
-      }
-    }
-
-    return { recipeId: rid, inserted: row.inserted };
-  });
+  }
 
   return {
-    status: inserted ? "saved" : "updated",
+    status: row.inserted ? "saved" : "updated",
     source: args.source,
     normalizedUrl: args.normalizedUrl,
     recipeId,
     title: data.title,
     partial: data.partial,
   };
+}
+
+/**
+ * Embed every recipe before opening a transaction, then persist the complete
+ * source as one atomic batch. If any embedding or database statement fails,
+ * no partial multi-recipe set is committed.
+ */
+export async function persistRecipesAtomically(
+  inputs: PersistRecipeInput[],
+  deps: RecipePersistenceDependencies = {
+    embed: embedText,
+    transaction: withTransaction,
+  },
+): Promise<IngestResult[]> {
+  const prepared: PreparedRecipe[] = [];
+  for (const input of inputs) {
+    const vector = await deps.embed(buildEmbedString(input.data), "document");
+    prepared.push({
+      ...input,
+      sourceDetail: input.resolveSourceDetail(input.data),
+      embeddingLiteral: toVectorLiteral(vector),
+    });
+  }
+  return deps.transaction(async (client) => {
+    const results: IngestResult[] = [];
+    for (const recipe of prepared) {
+      results.push(await persistPreparedRecipe(client, recipe));
+    }
+    return results;
+  });
 }
 
 /** The usable extraction(s) from a recipes[] response — drops empty entries
@@ -216,22 +261,20 @@ async function enrichAndPersist(args: {
   const approvedTags = await fetchApprovedTags();
   const recipes = await enrich({ approvedTags, userContent: args.userContent });
   const list = pickUsable(recipes);
+  if (list.length === 0) throw new NoRecipesExtractedError();
 
-  const results: IngestResult[] = [];
-  for (let i = 0; i < list.length; i++) {
-    const data = list[i]!;
-    const normalizedUrl = list.length === 1 ? args.normalizedUrl : `${args.normalizedUrl}#${i}`;
-    results.push(
-      await persist({
+  return persistRecipesAtomically(
+    list.map((data, i) => {
+      const normalizedUrl = list.length === 1 ? args.normalizedUrl : `${args.normalizedUrl}#${i}`;
+      return {
         normalizedUrl,
         source: args.source,
         resolveSourceDetail: args.resolveSourceDetail,
         data,
         description: args.userContent, // description = raw captured content, for re-extraction
-      }),
-    );
-  }
-  return results;
+      };
+    }),
+  );
 }
 
 async function ingestWeb(input: IngestInput, normalizedUrl: string): Promise<IngestResult[]> {
@@ -365,20 +408,17 @@ export async function ingestPhoto(input: IngestPhotoInput): Promise<IngestResult
   await mkdir(UPLOADS_DIR, { recursive: true });
   await writeFile(path.join(UPLOADS_DIR, filename), bytes);
 
-  const results: IngestResult[] = [];
-  for (let i = 0; i < usable.length; i++) {
-    const data = usable[i]!;
-    const normalizedUrl = usable.length === 1 ? `photo:${hash}` : `photo:${hash}#${i}`;
-    results.push(
-      await persist({
+  return persistRecipesAtomically(
+    usable.map((data, i) => {
+      const normalizedUrl = usable.length === 1 ? `photo:${hash}` : `photo:${hash}#${i}`;
+      return {
         normalizedUrl,
-        source: "photo",
+        source: "photo" as const,
         resolveSourceDetail: () => null,
         data,
         description: `Photo-extracted recipe (${filename})`,
         photoPath: filename,
-      }),
-    );
-  }
-  return results;
+      };
+    }),
+  );
 }
