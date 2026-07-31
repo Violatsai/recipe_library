@@ -55,8 +55,8 @@ The binding target design is `ARCHITECTURE.md` → “Durable asynchronous hando
 `docs/execution-plan.md` remains unchanged as a historical record. Its synchronous-ingestion
 and no-job-queue rules are superseded only by the narrow exception above.
 
-Post-refactor maintenance: update the transitive `body-parser` resolution to at least 1.20.6
-and PostCSS to at least 8.5.18, then rerun audit/build/tests as a separate dependency change.
+Dependency maintenance completed 2026-07-31: the transitive `body-parser` resolution is at
+least 1.20.6 and PostCSS is at least 8.5.18; the resulting npm audit is clean.
 
 Also deferred from the M5 manual click-through: improve the error experience when a photo
 upload does not contain a recipe. Keep photo ingestion synchronous; this is a focused validation/
