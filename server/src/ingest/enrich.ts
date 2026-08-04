@@ -100,13 +100,25 @@ function imageSystemPrompt(vocab: ApprovedTags): string {
 
 Rules:
 ${SHARED_RULES(vocab)}
-- Read the image carefully, including handwriting, stylized fonts, and text at an angle or partially obscured. If part of the image is illegible, do your best from context (e.g. typical proportions for that dish) rather than leaving a field empty, but set partial: true if entire sections (all ingredients, or all steps) are unreadable.
+- First decide whether the image visibly contains recipe text. A food photo, ingredient photo, menu, cookbook cover, nutrition label, shopping list, unrelated document, or blank/illegible image is NOT a recipe source. For any non-recipe source set contains_recipe to false and return an empty recipes array. Never invent a recipe from pictured food or ingredients.
+- Set contains_recipe to true only when the image itself contains recipe evidence such as a dish title together with an ingredient list and/or preparation directions. Do not use general cooking knowledge to manufacture an ingredient list or directions that are absent from the image.
+- Read visible recipe text carefully, including handwriting, stylized fonts, and text at an angle or partially obscured. Transcribe what is visible. You may resolve a partially legible word from nearby context, but never invent an entire missing ingredients or instructions section; mark the recipe partial when a section is cut off or unreadable.
 - The photo may show ONE recipe or SEVERAL distinct recipes (e.g. two recipes on the same cookbook page). Extract EVERY distinct recipe visible as a separate entry in the "recipes" array — do not merge them and do not drop any for being less prominent. A recipe's photo/illustration on the page is not itself a recipe to extract.`;
 }
 
 const EnrichmentList = z.object({
   recipes: z.array(Enrichment),
 });
+
+const ImageEnrichmentList = z.object({
+  contains_recipe: z.boolean(),
+  recipes: z.array(Enrichment),
+});
+
+export interface ImageEnrichmentResult {
+  containsRecipe: boolean;
+  recipes: EnrichmentData[];
+}
 
 export interface EnrichImageContext {
   approvedTags: ApprovedTags;
@@ -132,8 +144,8 @@ export async function enrich(ctx: EnrichContext): Promise<EnrichmentData[]> {
   return message.parsed_output.recipes;
 }
 
-/** Returns one entry per distinct recipe found in the photo (usually one). */
-export async function enrichFromImage(ctx: EnrichImageContext): Promise<EnrichmentData[]> {
+/** Classifies the image and returns one entry per distinct visible recipe. */
+export async function enrichFromImage(ctx: EnrichImageContext): Promise<ImageEnrichmentResult> {
   const client = new Anthropic({ apiKey: config.anthropicApiKey });
   const message = await client.messages.parse({
     model: "claude-sonnet-5",
@@ -151,15 +163,18 @@ export async function enrichFromImage(ctx: EnrichImageContext): Promise<Enrichme
           },
           {
             type: "text",
-            text: "Extract every recipe from this photo.",
+            text: "Classify this image, then extract every recipe visibly present. Return no recipes when it is not a recipe source.",
           },
         ],
       },
     ],
-    output_config: { format: zodOutputFormat(EnrichmentList) },
+    output_config: { format: zodOutputFormat(ImageEnrichmentList) },
   });
   if (!message.parsed_output) {
     throw new Error(`enrichment produced no parseable output (stop_reason: ${message.stop_reason})`);
   }
-  return message.parsed_output.recipes;
+  return {
+    containsRecipe: message.parsed_output.contains_recipe,
+    recipes: message.parsed_output.recipes,
+  };
 }

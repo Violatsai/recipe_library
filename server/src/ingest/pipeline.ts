@@ -5,7 +5,14 @@ import { fileURLToPath } from "node:url";
 import type { PoolClient } from "pg";
 import { query, withTransaction } from "../db.js";
 import { embedText, toVectorLiteral } from "./embed.js";
-import { enrich, enrichFromImage, type ApprovedTags, type EnrichmentData } from "./enrich.js";
+import {
+  enrich,
+  enrichFromImage,
+  type ApprovedTags,
+  type EnrichmentData,
+  type EnrichImageContext,
+  type ImageEnrichmentResult,
+} from "./enrich.js";
 import { fetchPage, NeedsHtmlError } from "./fetchPage.js";
 import { extractRecipeJsonLd } from "./jsonld.js";
 import { detectSource, normalizeUrl, youtubeVideoId } from "./normalizeUrl.js";
@@ -17,7 +24,7 @@ const UPLOADS_DIR = path.resolve(fileURLToPath(import.meta.url), "../../../uploa
 /** Thrown when a photo doesn't contain an extractable recipe (no ingredients, no steps). */
 export class NotARecipeError extends Error {
   constructor() {
-    super("no recipe could be extracted from this photo");
+    super("No recipe found in this image. Try a clear photo that includes visible ingredients or instructions.");
   }
 }
 
@@ -385,6 +392,23 @@ const MEDIA_TYPE_EXT: Record<IngestPhotoInput["mediaType"], string> = {
   "image/gif": "gif",
 };
 
+export interface PhotoIngestionDependencies {
+  fetchApprovedTags(): Promise<ApprovedTags>;
+  enrichImage(ctx: EnrichImageContext): Promise<ImageEnrichmentResult>;
+  saveImage(filename: string, bytes: Buffer): Promise<void>;
+  persist(inputs: PersistRecipeInput[]): Promise<IngestResult[]>;
+}
+
+const defaultPhotoIngestionDependencies: PhotoIngestionDependencies = {
+  fetchApprovedTags,
+  enrichImage: enrichFromImage,
+  saveImage: async (filename, bytes) => {
+    await mkdir(UPLOADS_DIR, { recursive: true });
+    await writeFile(path.join(UPLOADS_DIR, filename), bytes);
+  },
+  persist: persistRecipesAtomically,
+};
+
 /** Photo-source: content-hash dedup (re-uploading the same photo updates in
  *  place, same as re-saving a URL), vision enrichment, persist the image
  *  alongside the recipe row(s) — a photo may contain more than one recipe
@@ -392,23 +416,31 @@ const MEDIA_TYPE_EXT: Record<IngestPhotoInput["mediaType"], string> = {
  *  the same saved photo. Single-recipe photos keep the plain `photo:<hash>`
  *  key so re-uploading them still updates in place; once a photo yields more
  *  than one recipe each row gets a `#<index>` suffix to stay unique. */
-export async function ingestPhoto(input: IngestPhotoInput): Promise<IngestResult[]> {
+export async function ingestPhoto(
+  input: IngestPhotoInput,
+  deps: PhotoIngestionDependencies = defaultPhotoIngestionDependencies,
+): Promise<IngestResult[]> {
   const bytes = Buffer.from(input.imageBase64, "base64");
   const hash = createHash("sha256").update(bytes).digest("hex");
 
-  const approvedTags = await fetchApprovedTags();
-  const recipes = await enrichFromImage({ approvedTags, imageBase64: input.imageBase64, mediaType: input.mediaType });
-  const usable = recipes.filter((d) => d.ingredients.length > 0 || d.steps.length > 0);
-  if (usable.length === 0) {
+  const approvedTags = await deps.fetchApprovedTags();
+  const extraction = await deps.enrichImage({
+    approvedTags,
+    imageBase64: input.imageBase64,
+    mediaType: input.mediaType,
+  });
+  const usable = extraction.recipes.filter((d) => d.ingredients.length > 0 || d.steps.length > 0);
+  // Treat the explicit classification as authoritative even if a model response
+  // is internally contradictory and also contains plausible-looking recipes.
+  if (!extraction.containsRecipe || usable.length === 0) {
     throw new NotARecipeError();
   }
 
   const ext = MEDIA_TYPE_EXT[input.mediaType];
   const filename = `${hash}.${ext}`;
-  await mkdir(UPLOADS_DIR, { recursive: true });
-  await writeFile(path.join(UPLOADS_DIR, filename), bytes);
+  await deps.saveImage(filename, bytes);
 
-  return persistRecipesAtomically(
+  return deps.persist(
     usable.map((data, i) => {
       const normalizedUrl = usable.length === 1 ? `photo:${hash}` : `photo:${hash}#${i}`;
       return {

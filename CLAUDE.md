@@ -58,9 +58,9 @@ and no-job-queue rules are superseded only by the narrow exception above.
 Dependency maintenance completed 2026-07-31: the transitive `body-parser` resolution is at
 least 1.20.6 and PostCSS is at least 8.5.18; the resulting npm audit is clean.
 
-Also deferred from the M5 manual click-through: improve the error experience when a photo
-upload does not contain a recipe. Keep photo ingestion synchronous; this is a focused validation/
-messaging issue, not part of the durable extension-ingestion queue.
+Non-recipe photo handling completed 2026-07-31: vision explicitly classifies whether visible
+recipe text is present, and a negative/empty result returns an actionable 422 before any file or
+recipe write. Photo ingestion remains synchronous and outside the durable extension queue.
 
 ## Commands (once scaffolded, M0+)
 

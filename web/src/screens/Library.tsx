@@ -226,7 +226,7 @@ export function Library({ active }: { active: boolean }) {
           </button>
         </div>
         {uploadError && (
-          <div className="upload-error">
+          <div className="upload-error" role="alert">
             {uploadError} <button className="link-btn" onClick={() => setUploadError(null)}>dismiss</button>
           </div>
         )}

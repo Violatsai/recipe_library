@@ -99,6 +99,8 @@ straight to another in the same tab, refresh the page (⌘R) before clicking Sav
 from photo"** in the Library tab of the web app instead of the extension — it goes
 through Claude's vision rather than page capture. A single photo with more than one
 recipe on it (e.g. two recipes on one cookbook page) is split into separate entries.
+Images without visible recipe text are rejected without saving a file or library row;
+the Library prompts you to try a clearer photo with ingredients or instructions.
 
 See [`extension/README.md`](extension/README.md) for details.
 
