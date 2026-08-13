@@ -10,6 +10,20 @@ import { createIngestionJobsRouter } from "../src/routes/ingestionJobs.js";
 
 const JOB_ID = "11111111-1111-4111-8111-111111111111";
 
+const confirmedRecipe = {
+  title: "Confirmed Soup",
+  servings: 2,
+  total_time_min: 20,
+  steps: ["Simmer."],
+  ingredients: [{ name: "tomato", quantity: 2, unit: null, raw_text: "2 tomatoes" }],
+  defining_ingredients: ["tomato"],
+  tags: { cuisine: [], dish_type: [], dietary: [] },
+  new_tags: [],
+  macros_per_serving: null,
+  partial: false,
+  source_used: null,
+};
+
 function job(status: IngestionJob["status"] = "queued"): IngestionJob {
   const now = new Date("2026-07-31T12:00:00.000Z");
   return {
@@ -119,6 +133,24 @@ describe("ingestion job routes", () => {
     expect(onAccepted).toHaveBeenCalledOnce();
     expect(body).not.toHaveProperty("source_html");
     expect(JSON.stringify(body)).not.toContain("secret captured recipe");
+  });
+
+  it("validates and stores a confirmed preview so the worker can skip re-extraction", async () => {
+    const response = await request("/api/ingestion-jobs", {
+      method: "POST",
+      headers: { "x-api-key": "test-key" },
+      body: JSON.stringify({
+        url: "https://www.instagram.com/p/example/",
+        html: "<html>captured post</html>",
+        previewedRecipes: [confirmedRecipe],
+      }),
+    });
+
+    expect(response.status).toBe(202);
+    expect(enqueue).toHaveBeenCalledWith(expect.objectContaining({
+      sourceHtml: "<html>captured post</html>",
+      previewedRecipes: [confirmedRecipe],
+    }));
   });
 
   it("lists only the store's safe lifecycle representation", async () => {

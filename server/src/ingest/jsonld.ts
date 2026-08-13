@@ -44,3 +44,19 @@ export function extractRecipeJsonLd(html: string): Record<string, unknown> | nul
   }
   return null;
 }
+
+function hasText(value: unknown): boolean {
+  if (typeof value === "string") return value.trim().length > 0;
+  if (Array.isArray(value)) return value.some(hasText);
+  if (value && typeof value === "object") {
+    return Object.values(value as Record<string, unknown>).some(hasText);
+  }
+  return false;
+}
+
+/** A schema.org Recipe is useful as an extraction source only when it carries
+ * both the ingredient list and method. Many publisher templates emit a
+ * metadata-only Recipe node alongside the actual visible recipe content. */
+export function hasUsableRecipeJsonLd(recipe: Record<string, unknown>): boolean {
+  return hasText(recipe.recipeIngredient) && hasText(recipe.recipeInstructions);
+}

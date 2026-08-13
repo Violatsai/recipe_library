@@ -14,7 +14,7 @@ import {
   type ImageEnrichmentResult,
 } from "./enrich.js";
 import { fetchPage, NeedsHtmlError } from "./fetchPage.js";
-import { extractRecipeJsonLd } from "./jsonld.js";
+import { extractRecipeJsonLd, hasUsableRecipeJsonLd } from "./jsonld.js";
 import { detectSource, normalizeUrl, youtubeVideoId } from "./normalizeUrl.js";
 import { extractReadable } from "./readable.js";
 import { findRecipeLink, getTranscript, getVideoMeta } from "./youtube.js";
@@ -100,7 +100,7 @@ function jsonldContent(jsonld: Record<string, unknown>, url: string): string {
 /** Build enrichment input from a recipe web page's HTML. */
 function pageContent(html: string, url: string): string {
   const jsonld = extractRecipeJsonLd(html);
-  if (jsonld) return jsonldContent(jsonld, url);
+  if (jsonld && hasUsableRecipeJsonLd(jsonld)) return jsonldContent(jsonld, url);
   const r = extractReadable(html, url);
   return `Source URL: ${url}\n\nArticle title: ${r.title}\n\nArticle text:\n${r.textContent}`;
 }
@@ -300,7 +300,8 @@ async function ingestYouTube(normalizedUrl: string): Promise<IngestResult[]> {
   const meta = await getVideoMeta(videoId);
   const link = findRecipeLink(meta.description);
 
-  // Try the linked page. Recipe JSON-LD → trust it directly (high confidence).
+  // Try the linked page. Only complete Recipe JSON-LD is authoritative;
+  // publisher templates often expose a metadata-only Recipe node.
   // No markup → keep its readable text and let Claude decide below whether it's
   // the real recipe or an unrelated sponsor/shop page. (A binary JSON-LD gate
   // over-rejected legit recipe pages that simply lack schema markup.)
@@ -309,7 +310,7 @@ async function ingestYouTube(normalizedUrl: string): Promise<IngestResult[]> {
     try {
       const html = await fetchPage(link);
       const jsonld = extractRecipeJsonLd(html);
-      if (jsonld) {
+      if (jsonld && hasUsableRecipeJsonLd(jsonld)) {
         return await enrichAndPersist({
           normalizedUrl,
           source: "youtube",
@@ -370,6 +371,13 @@ export async function ingest(input: IngestInput): Promise<IngestResult[]> {
 export interface IngestPreviewResult {
   title: string;
   partial: boolean;
+  ingredientCount: number;
+  stepCount: number;
+}
+
+export interface IngestPreview {
+  recipes: IngestPreviewResult[];
+  previewedRecipes: EnrichmentData[];
 }
 
 /** Enrichment only — no embed call, no DB write. Lets a caller (the
@@ -377,12 +385,42 @@ export interface IngestPreviewResult {
  *  was actually found before committing to a save. Web-only: the extension
  *  never needs this for YouTube, since there's no client-side HTML capture
  *  (and so no staleness risk) on that path. */
-export async function previewIngest(input: IngestInput): Promise<IngestPreviewResult[]> {
+export async function previewIngest(input: IngestInput): Promise<IngestPreview> {
   const normalizedUrl = normalizeUrl(input.url);
   const html = await fetchPage(input.url, input.html); // may throw NeedsHtmlError → 422
   const approvedTags = await fetchApprovedTags();
   const recipes = await enrich({ approvedTags, userContent: pageContent(html, normalizedUrl) });
-  return pickUsable(recipes).map((d) => ({ title: d.title, partial: d.partial }));
+  const previewedRecipes = pickUsable(recipes);
+  return {
+    recipes: previewedRecipes.map((d) => ({
+      title: d.title,
+      partial: d.partial,
+      ingredientCount: d.ingredients.length,
+      stepCount: d.steps.length,
+    })),
+    previewedRecipes,
+  };
+}
+
+/** Persist a user-confirmed preview without repeating its extraction call. */
+export async function persistPreviewedWeb(
+  input: IngestInput,
+  previewedRecipes: EnrichmentData[],
+): Promise<IngestResult[]> {
+  const normalizedUrl = normalizeUrl(input.url);
+  const html = await fetchPage(input.url, input.html);
+  const list = pickUsable(previewedRecipes);
+  if (list.length === 0) throw new NoRecipesExtractedError();
+  const description = pageContent(html, normalizedUrl);
+  return persistRecipesAtomically(
+    list.map((data, i) => ({
+      normalizedUrl: list.length === 1 ? normalizedUrl : `${normalizedUrl}#${i}`,
+      source: "web" as const,
+      resolveSourceDetail: () => null,
+      data,
+      description,
+    })),
+  );
 }
 
 const MEDIA_TYPE_EXT: Record<IngestPhotoInput["mediaType"], string> = {

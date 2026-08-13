@@ -13,6 +13,9 @@ export interface QueueRecipeMessage {
   /** Present for a social capture already reviewed in the popup. Ordinary
    *  page HTML is captured by the background worker; YouTube needs no HTML. */
   html?: string;
+  /** Confirmed extraction from /ingest-preview. The server validates it and
+   *  persists it with the job so confirmation does not run extraction twice. */
+  previewedRecipes?: unknown;
 }
 
 export interface AcceptedIngestionJob {

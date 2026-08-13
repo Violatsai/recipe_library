@@ -6,6 +6,7 @@ import {
 import {
   ingest,
   NoRecipesExtractedError,
+  persistPreviewedWeb,
   type IngestInput,
   type IngestResult,
 } from "./pipeline.js";
@@ -74,10 +75,15 @@ export async function processAvailableIngestionJobs(
 
     let results: IngestResult[];
     try {
-      results = await deps.ingestRecipe({
-        url: job.source_url,
-        html: job.source_html ?? undefined,
-      });
+      results = job.previewed_recipes
+        ? await persistPreviewedWeb(
+          { url: job.source_url, html: job.source_html ?? undefined },
+          job.previewed_recipes,
+        )
+        : await deps.ingestRecipe({
+          url: job.source_url,
+          html: job.source_html ?? undefined,
+        });
     } catch (error) {
       const safe = safeIngestionFailure(error);
       deps.logger.error(`ingestion job ${job.id} failed`, error);

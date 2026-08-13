@@ -88,6 +88,18 @@ describe("queueRecipeCapture", () => {
     });
   });
 
+  it("passes a confirmed preview extraction through to the durable job", async () => {
+    const { deps, fetchMock } = dependencies();
+    const previewedRecipes = [{ title: "Confirmed recipe" }];
+    await queueRecipeCapture(message({
+      url: "https://www.instagram.com/p/example",
+      html: "<html>confirmed</html>",
+      previewedRecipes,
+    }), deps);
+
+    expect(JSON.parse(String(fetchMock.mock.calls[0]![1]?.body))).toMatchObject({ previewedRecipes });
+  });
+
   it("does not enqueue if the tab navigates before snapshot capture", async () => {
     const { deps, fetchMock } = dependencies({
       captureTab: async () => ({ url: "https://example.com/different", html: "<html></html>" }),

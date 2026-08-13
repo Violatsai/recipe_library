@@ -82,7 +82,12 @@ export async function queueRecipeCapture(
     response = await deps.fetch(`${settings.apiBase}/api/ingestion-jobs`, {
       method: "POST",
       headers: { "content-type": "application/json", "x-api-key": settings.apiKey },
-      body: JSON.stringify({ url: message.url, title: message.title, html }),
+      body: JSON.stringify({
+        url: message.url,
+        title: message.title,
+        html,
+        previewedRecipes: message.previewedRecipes,
+      }),
     });
   } catch {
     return {

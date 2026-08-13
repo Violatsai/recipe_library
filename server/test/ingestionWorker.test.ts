@@ -1,9 +1,10 @@
 import { describe, expect, it, vi } from "vitest";
+import type { EnrichmentData } from "../src/ingest/enrich.js";
 import type {
   ClaimedIngestionJob,
   IngestionWorkerStore,
 } from "../src/ingest/jobs.js";
-import type { IngestResult } from "../src/ingest/pipeline.js";
+import { persistPreviewedWeb, type IngestResult } from "../src/ingest/pipeline.js";
 import {
   IngestionWorker,
   processAvailableIngestionJobs,
@@ -11,6 +12,14 @@ import {
   type IngestionWorkerDependencies,
   type WorkerLogger,
 } from "../src/ingest/worker.js";
+
+// The worker calls persistPreviewedWeb directly (it is not an injected
+// dependency); stub just that export so the confirmed-preview branch is
+// observable without a database.
+vi.mock("../src/ingest/pipeline.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../src/ingest/pipeline.js")>()),
+  persistPreviewedWeb: vi.fn(),
+}));
 
 function claimed(id: string): ClaimedIngestionJob {
   return {
@@ -20,6 +29,7 @@ function claimed(id: string): ClaimedIngestionJob {
     source_type: "web",
     captured_title: `Recipe ${id}`,
     source_html: `<html>${id}</html>`,
+    previewed_recipes: null,
     attempt_count: 1,
   };
 }
@@ -93,6 +103,36 @@ describe("processAvailableIngestionJobs", () => {
     );
     expect(store.markSucceeded).toHaveBeenCalledWith("good", ["recipe-good"]);
     expect(JSON.stringify((store.markFailed as ReturnType<typeof vi.fn>).mock.calls)).not.toContain("secret SDK");
+  });
+
+  it("persists a confirmed preview without re-running extraction", async () => {
+    const confirmed: EnrichmentData = {
+      title: "Confirmed Soup",
+      servings: 2,
+      total_time_min: 20,
+      steps: ["Simmer."],
+      ingredients: [{ name: "tomato", quantity: 2, unit: null, raw_text: "2 tomatoes" }],
+      defining_ingredients: ["tomato"],
+      tags: { cuisine: [], dish_type: [], dietary: [] },
+      new_tags: [],
+      macros_per_serving: null,
+      partial: false,
+      source_used: null,
+    };
+    const job = { ...claimed("previewed"), previewed_recipes: [confirmed] };
+    const store = fakeStore([job]);
+    const ingestRecipe = vi.fn(async () => [result("previewed")]);
+    vi.mocked(persistPreviewedWeb).mockResolvedValueOnce([result("previewed")]);
+
+    const count = await processAvailableIngestionJobs({ store, ingestRecipe, logger: logger() });
+
+    expect(count).toBe(1);
+    expect(ingestRecipe).not.toHaveBeenCalled();
+    expect(persistPreviewedWeb).toHaveBeenCalledWith(
+      { url: job.source_url, html: job.source_html },
+      [confirmed],
+    );
+    expect(store.markSucceeded).toHaveBeenCalledWith("previewed", ["recipe-previewed"]);
   });
 
   it("passes the durable captured snapshot to the pipeline", async () => {

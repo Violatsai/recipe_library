@@ -42,7 +42,9 @@ The binding target design is `ARCHITECTURE.md` → “Durable asynchronous hando
 - Extension web/YouTube saves persist a job and receive `202` before long-running extraction.
 - The extension background service worker performs delivery only; Claude/Voyage work runs in
   the server worker from the stored input.
-- Facebook/Instagram/Threads retain expand → preview → explicit confirmation, then enqueue.
+- Facebook/Instagram/Threads retain expand → preview → explicit confirmation. Facebook
+  uses the original synchronous pre-queue save path; Instagram and Threads reuse the
+  confirmed structured extraction in the worker rather than run twice.
   Do not redesign social confirmation until the queue is stable.
 - Photo upload and bookmark bulk import remain synchronous in the first release.
 - Incomplete/failed captures live in `ingestion_jobs`, never as placeholder `recipes` rows.

@@ -8,6 +8,7 @@ import {
   type JobMutationResult,
 } from "../ingest/jobs.js";
 import { detectSource, normalizeUrl } from "../ingest/normalizeUrl.js";
+import { Enrichment } from "../ingest/enrich.js";
 import { ingestionWorker } from "../ingest/worker.js";
 
 const HttpUrl = z.string().url().refine((value) => {
@@ -19,6 +20,7 @@ const EnqueueBody = z.object({
   url: HttpUrl,
   title: z.string().max(500).optional(),
   html: z.string().optional(),
+  previewedRecipes: z.array(z.unknown()).min(1).optional(),
 }).strict();
 
 const JobId = z.string().uuid();
@@ -54,6 +56,13 @@ export function createIngestionJobsRouter(
       res.status(400).json({ error: parsed.error.issues.map((i) => i.message).join("; ") });
       return;
     }
+    const validatedPreview = parsed.data.previewedRecipes
+      ? Enrichment.array().safeParse(parsed.data.previewedRecipes)
+      : undefined;
+    if (validatedPreview && !validatedPreview.success) {
+      res.status(400).json({ error: "invalid confirmed preview" });
+      return;
+    }
 
     const normalizedUrl = normalizeUrl(parsed.data.url);
     const fallbackTitle = new URL(parsed.data.url).hostname;
@@ -63,6 +72,7 @@ export function createIngestionJobsRouter(
       sourceType: detectSource(parsed.data.url),
       capturedTitle: parsed.data.title?.trim() || fallbackTitle,
       sourceHtml: parsed.data.html,
+      previewedRecipes: validatedPreview?.data,
     });
     onAccepted();
     res.status(202).json({ ...result.job, disposition: result.disposition });

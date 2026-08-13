@@ -53,10 +53,23 @@ const SOCIAL_STAY_HINT = "Keep this popup open while the social-post preview is 
 interface IngestPreviewResult {
   title: string;
   partial: boolean;
+  ingredientCount: number;
+  stepCount: number;
+}
+
+interface IngestPreviewResponse {
+  recipes: IngestPreviewResult[];
+  previewedRecipes: unknown;
 }
 
 interface IngestError {
   error?: string;
+}
+
+interface DirectIngestResult {
+  status: "saved" | "updated";
+  title: string;
+  partial: boolean;
 }
 
 interface PreviewBody {
@@ -67,11 +80,22 @@ interface PreviewBody {
 interface PendingSocialCapture extends PreviewBody {
   tabId: number;
   title?: string;
+  previewedRecipes?: unknown;
+  directSave?: boolean;
 }
 
 async function activeTab(): Promise<chrome.tabs.Tab | undefined> {
   const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
   return tab;
+}
+
+function isFacebookUrl(url: string): boolean {
+  try {
+    const host = new URL(url).hostname.toLowerCase();
+    return host === "facebook.com" || host.endsWith(".facebook.com");
+  } catch {
+    return false;
+  }
 }
 
 /** Runs in the page's own context via chrome.scripting.executeScript, so it
@@ -89,9 +113,11 @@ async function activeTab(): Promise<chrome.tabs.Tab | undefined> {
  */
 async function expandCaptionsInPage(): Promise<void> {
   const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+  const isFacebook = location.hostname === "facebook.com" || location.hostname.endsWith(".facebook.com");
 
-  const primaryContainer = (): Element =>
-    document.querySelector("article") ?? document.querySelector("main") ?? document.body;
+  const primaryContainer = (): HTMLElement => document.querySelector<HTMLElement>("article")
+    ?? document.querySelector<HTMLElement>("main")
+    ?? document.body;
 
   const start = Date.now();
   while ((primaryContainer().textContent ?? "").trim().length < 400 && Date.now() - start < 8000) {
@@ -120,7 +146,11 @@ async function expandCaptionsInPage(): Promise<void> {
       if (el.tagName === "A" && (el as HTMLAnchorElement).href) continue;
       // skip anything inside site chrome (nav/menu/dialog) — caption toggles
       // live inside the post body, never inside navigation or a popup menu
-      if (el.closest("nav, [role='navigation'], [role='menu'], [role='dialog']")) continue;
+      if (el.closest("nav, [role='navigation'], [role='menu']")) continue;
+      // Facebook's single-post permalink is itself a dialog. Its caption's
+      // See more control lives there, so do not discard it with unrelated
+      // app dialogs; the strict label and link checks above still apply.
+      if (!isFacebook && el.closest("[role='dialog']")) continue;
       el.click();
     }
     await sleep(500);
@@ -159,6 +189,7 @@ function setSocialHint(url: string): void {
 
 function showPreview(capture: PendingSocialCapture, results: IngestPreviewResult[]): void {
   pendingCapture = capture;
+  confirmBtn.textContent = capture.directSave ? "Confirm & save" : "Confirm & queue";
   previewTitlesEl.innerHTML = "";
   for (const r of results) {
     const li = document.createElement("li");
@@ -200,6 +231,34 @@ async function queueCapture(message: QueueRecipeMessage): Promise<void> {
   }
 }
 
+/** Pre-queue Facebook flow retained from the confirmed stable implementation:
+ *  confirmation persists the reviewed active-tab snapshot while the popup is
+ *  open, rather than handing it to the asynchronous worker. */
+async function saveFacebookDirectly(capture: PendingSocialCapture): Promise<void> {
+  const settings = await getSettings();
+  try {
+    const response = await fetch(`${settings.apiBase}/api/ingest`, {
+      method: "POST",
+      headers: { "content-type": "application/json", "x-api-key": settings.apiKey },
+      body: JSON.stringify({ url: capture.url, html: capture.html }),
+    });
+    const data = (await response.json().catch(() => ({}))) as DirectIngestResult[] | IngestError;
+    if (response.status === 401) {
+      setStatus("err", "Invalid API key — check settings.");
+    } else if (!response.ok) {
+      setStatus("err", (data as IngestError).error ?? `Server error (HTTP ${response.status}).`);
+    } else {
+      const results = data as DirectIngestResult[];
+      const titles = results.map((result) => result.title).join(", ");
+      setStatus("ok", results.length === 1
+        ? `${results[0]!.status === "updated" ? "Updated" : "Saved"} ✓ ${titles}`
+        : `Saved ✓ ${results.length} recipes: ${titles}`);
+    }
+  } catch {
+    setStatus("err", "Could not reach the server — is it running?");
+  }
+}
+
 async function doPreview(capture: PendingSocialCapture): Promise<void> {
   const settings = await getSettings();
   try {
@@ -208,18 +267,24 @@ async function doPreview(capture: PendingSocialCapture): Promise<void> {
       headers: { "content-type": "application/json", "x-api-key": settings.apiKey },
       body: JSON.stringify({ url: capture.url, html: capture.html } satisfies PreviewBody),
     });
-    const data = (await resp.json().catch(() => ({}))) as IngestPreviewResult[] | IngestError;
+    const data = (await resp.json().catch(() => ({}))) as IngestPreviewResponse | IngestError;
     if (resp.status === 401) {
       setStatus("err", "Invalid API key — check settings.");
     } else if (!resp.ok) {
       setStatus("err", (data as IngestError).error ?? `Server error (HTTP ${resp.status}).`);
     } else {
-      const results = data as IngestPreviewResult[];
+      const preview = data as IngestPreviewResponse;
+      const results = preview.recipes;
       if (results.length === 0) {
         setStatus("err", "No recipe found on this page.");
+      } else if (capture.directSave && results.some((result) =>
+        result.partial && (result.ingredientCount < 2 || result.stepCount < 2),
+      )) {
+        setStatus("err", "Facebook exposed only a truncated recipe preview. Expand the post caption and try again.");
+        hintEl.textContent = "Nothing was saved.";
       } else {
         setStatus("", "");
-        showPreview(capture, results);
+        showPreview({ ...capture, previewedRecipes: preview.previewedRecipes }, results);
       }
     }
   } catch {
@@ -256,7 +321,13 @@ async function save(): Promise<void> {
       await expandCaptions(tab.id);
       const html = await capturePageHtml(tab.id);
       setStatus("busy", "Checking what's on the page…");
-      await doPreview({ tabId: tab.id, url: tab.url, title: tab.title, html });
+      await doPreview({
+        tabId: tab.id,
+        url: tab.url,
+        title: tab.title,
+        html,
+        directSave: isFacebookUrl(tab.url),
+      });
       // showPreview()/doPreview()'s error path both leave saveBtn visible —
       // re-enable it unless a preview is now showing (save stays hidden then).
       if (previewEl.hidden) {
@@ -280,14 +351,19 @@ async function confirmSave(): Promise<void> {
   previewEl.hidden = true;
   saveBtn.hidden = false;
   saveBtn.disabled = true;
-  setStatus("busy", "Adding to extraction queue…");
-  await queueCapture({
-    type: "queue-recipe",
-    tabId: capture.tabId,
-    url: capture.url,
-    title: capture.title,
-    html: capture.html,
-  });
+  setStatus("busy", capture.directSave ? "Saving Facebook recipe…" : "Adding to extraction queue…");
+  if (capture.directSave) {
+    await saveFacebookDirectly(capture);
+  } else {
+    await queueCapture({
+      type: "queue-recipe",
+      tabId: capture.tabId,
+      url: capture.url,
+      title: capture.title,
+      html: capture.html,
+      previewedRecipes: capture.previewedRecipes,
+    });
+  }
   pendingCapture = null;
   saveBtn.disabled = false;
 }

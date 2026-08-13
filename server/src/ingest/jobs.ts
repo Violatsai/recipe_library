@@ -1,5 +1,6 @@
 import type { PoolClient } from "pg";
 import { query, withTransaction } from "../db.js";
+import type { EnrichmentData } from "./enrich.js";
 
 export type IngestionJobStatus = "queued" | "processing" | "succeeded" | "failed";
 export type IngestionJobSource = "web" | "youtube";
@@ -23,6 +24,7 @@ export interface IngestionJob {
 
 interface StoredIngestionJob extends Omit<IngestionJob, "recipe_ids"> {
   source_html: string | null;
+  previewed_recipes: EnrichmentData[] | null;
 }
 
 export interface EnqueueIngestionJobInput {
@@ -31,6 +33,7 @@ export interface EnqueueIngestionJobInput {
   sourceType: IngestionJobSource;
   capturedTitle: string;
   sourceHtml?: string;
+  previewedRecipes?: EnrichmentData[];
 }
 
 export type EnqueueDisposition = "created" | "existing" | "requeued";
@@ -59,6 +62,7 @@ export interface ClaimedIngestionJob {
   source_type: IngestionJobSource;
   captured_title: string;
   source_html: string | null;
+  previewed_recipes: EnrichmentData[] | null;
   attempt_count: number;
 }
 
@@ -70,12 +74,12 @@ export interface IngestionWorkerStore {
 }
 
 const JOB_COLUMNS = `
-  id, normalized_url, source_url, source_type, captured_title, source_html,
+  id, normalized_url, source_url, source_type, captured_title, source_html, previewed_recipes,
   status, attempt_count, error_code, error_message,
   submitted_at, started_at, finished_at, updated_at`;
 
 function publicJob(row: StoredIngestionJob, recipeIds: string[] = []): IngestionJob {
-  const { source_html: _sourceHtml, ...safe } = row;
+  const { source_html: _sourceHtml, previewed_recipes: _previewedRecipes, ...safe } = row;
   return { ...safe, recipe_ids: recipeIds };
 }
 
@@ -88,11 +92,13 @@ async function replaceCompletedJob(
     await client.query<StoredIngestionJob>(
       `UPDATE ingestion_jobs
           SET source_url = $2, source_type = $3, captured_title = $4, source_html = $5,
+              previewed_recipes = $6,
               status = 'queued', attempt_count = 0, error_code = NULL, error_message = NULL,
               submitted_at = now(), started_at = NULL, finished_at = NULL, updated_at = now()
         WHERE id = $1
         RETURNING ${JOB_COLUMNS}`,
-      [id, input.sourceUrl, input.sourceType, input.capturedTitle, input.sourceHtml ?? null],
+      [id, input.sourceUrl, input.sourceType, input.capturedTitle, input.sourceHtml ?? null,
+        input.previewedRecipes ? JSON.stringify(input.previewedRecipes) : null],
     )
   ).rows[0]!;
   await client.query("DELETE FROM ingestion_job_recipes WHERE job_id = $1", [id]);
@@ -111,8 +117,8 @@ export async function enqueueIngestionJob(
     const inserted = (
       await client.query<StoredIngestionJob>(
         `INSERT INTO ingestion_jobs
-           (normalized_url, source_url, source_type, captured_title, source_html)
-         VALUES ($1, $2, $3, $4, $5)
+           (normalized_url, source_url, source_type, captured_title, source_html, previewed_recipes)
+         VALUES ($1, $2, $3, $4, $5, $6)
          ON CONFLICT (normalized_url) DO NOTHING
          RETURNING ${JOB_COLUMNS}`,
         [
@@ -121,6 +127,7 @@ export async function enqueueIngestionJob(
           input.sourceType,
           input.capturedTitle,
           input.sourceHtml ?? null,
+          input.previewedRecipes ? JSON.stringify(input.previewedRecipes) : null,
         ],
       )
     ).rows[0];
@@ -240,7 +247,7 @@ export async function claimNextIngestionJob(): Promise<ClaimedIngestionJob | nul
            FROM next_job
           WHERE ij.id = next_job.id
          RETURNING ij.id, ij.normalized_url, ij.source_url, ij.source_type,
-                   ij.captured_title, ij.source_html, ij.attempt_count`,
+                   ij.captured_title, ij.source_html, ij.previewed_recipes, ij.attempt_count`,
       )
     ).rows[0];
     return row ?? null;
@@ -271,7 +278,7 @@ export async function markIngestionJobSucceeded(
     }
     await client.query(
       `UPDATE ingestion_jobs
-          SET status = 'succeeded', source_html = NULL,
+          SET status = 'succeeded', source_html = NULL, previewed_recipes = NULL,
               error_code = NULL, error_message = NULL,
               finished_at = now(), updated_at = now()
         WHERE id = $1`,
