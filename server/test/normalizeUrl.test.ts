@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { detectSource, normalizeUrl } from "../src/ingest/normalizeUrl.js";
+import { detectSource, normalizeUrl, tiktokPostId } from "../src/ingest/normalizeUrl.js";
 
 describe("normalizeUrl — web pages", () => {
   it("strips utm_* and known tracking params", () => {
@@ -72,6 +72,55 @@ describe("normalizeUrl — YouTube canonicalization", () => {
     expect(normalizeUrl("https://m.youtube.com/watch?v=dQw4w9WgXcQ&feature=share")).toBe(
       canonical,
     );
+  });
+});
+
+describe("normalizeUrl — TikTok canonicalization", () => {
+  const canonical = "https://www.tiktok.com/@ourhealthy_kitchen/video/7506640293207248158";
+
+  it("strips per-share tracking params from a web share link", () => {
+    expect(
+      normalizeUrl(
+        "https://www.tiktok.com/@ourhealthy_kitchen/video/7506640293207248158?is_from_webapp=1&sender_device=pc&web_id=7649434603824580110",
+      ),
+    ).toBe(canonical);
+  });
+
+  it("m.tiktok.com host canonicalizes to www", () => {
+    expect(
+      normalizeUrl("https://m.tiktok.com/@ourhealthy_kitchen/video/7506640293207248158"),
+    ).toBe(canonical);
+  });
+
+  it("two shares of the same video normalize equal (dedup)", () => {
+    expect(normalizeUrl(`${canonical}?web_id=1&lang=en`)).toBe(
+      normalizeUrl(`${canonical}?web_id=2`),
+    );
+  });
+
+  it("photo posts keep their own identity", () => {
+    expect(
+      normalizeUrl("https://www.tiktok.com/@someone/photo/123456?is_from_webapp=1"),
+    ).toBe("https://www.tiktok.com/@someone/photo/123456");
+  });
+
+  it("non-post TikTok URLs fall through to generic normalization", () => {
+    expect(normalizeUrl("https://www.tiktok.com/@someone?lang=en")).toBe(
+      "https://www.tiktok.com/@someone?lang=en",
+    );
+  });
+});
+
+describe("tiktokPostId", () => {
+  it("extracts the numeric post id", () => {
+    expect(
+      tiktokPostId("https://www.tiktok.com/@ourhealthy_kitchen/video/7506640293207248158?web_id=1"),
+    ).toBe("7506640293207248158");
+  });
+
+  it("returns null for non-post URLs", () => {
+    expect(tiktokPostId("https://www.tiktok.com/@someone")).toBeNull();
+    expect(tiktokPostId("not a url")).toBeNull();
   });
 });
 

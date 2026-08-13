@@ -17,6 +17,7 @@ import { fetchPage, NeedsHtmlError } from "./fetchPage.js";
 import { extractRecipeJsonLd, hasUsableRecipeJsonLd } from "./jsonld.js";
 import { detectSource, normalizeUrl, youtubeVideoId } from "./normalizeUrl.js";
 import { extractReadable } from "./readable.js";
+import { extractTikTokCaption } from "./tiktok.js";
 import { findRecipeLink, getTranscript, getVideoMeta } from "./youtube.js";
 
 const UPLOADS_DIR = path.resolve(fileURLToPath(import.meta.url), "../../../uploads");
@@ -101,6 +102,11 @@ function jsonldContent(jsonld: Record<string, unknown>, url: string): string {
 function pageContent(html: string, url: string): string {
   const jsonld = extractRecipeJsonLd(html);
   if (jsonld && hasUsableRecipeJsonLd(jsonld)) return jsonldContent(jsonld, url);
+  const tiktok = extractTikTokCaption(html, url);
+  if (tiktok) {
+    const by = tiktok.author ? ` by @${tiktok.author}` : "";
+    return `Source URL: ${url}\n\nTikTok video caption${by}:\n${tiktok.caption}`;
+  }
   const r = extractReadable(html, url);
   return `Source URL: ${url}\n\nArticle title: ${r.title}\n\nArticle text:\n${r.textContent}`;
 }

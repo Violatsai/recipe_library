@@ -318,6 +318,7 @@ messages for the full reasoning behind each.
 | **grocery list → Apple Reminders** | Optional, macOS-only push of a grocery list to Reminders.app via AppleScript (`server/src/reminders.ts`) — syncs to phone through iCloud, no accounts needed. |
 | **bulk import** | `server/scripts/bulk-import-bookmarks.ts` — ingests every link in a Chrome-bookmarks-export folder directly through the pipeline (bypassing the extension), reporting which pages need a manual save because they're bot-walled server-side. |
 | **`list_meal_plans` agent tool** | Chat history between turns is plain text only (no tool-call IDs survive), so the agent had no way to reuse a meal plan created earlier in the conversation and would recreate it from scratch. This tool lets it look up an existing plan by its recipes/title, the same way `search_recipes` lets it rediscover recipe ids. |
+| **TikTok capture** | TikTok videos, through the extension's social preview → confirm flow (queued with the confirmed extraction, like Instagram/Threads — not Facebook's synchronous path). Recipe TikToks carry the full recipe in the caption, but the caption lives only in the page's `__UNIVERSAL_DATA_FOR_REHYDRATION__` state JSON — no visible DOM text on the served page and no Recipe JSON-LD, so readability yields nothing. `server/src/ingest/tiktok.ts` parses the caption from that blob, trusting it only when its post id matches the id in the URL being saved (the state JSON goes stale across SPA navigation). TikTok post URLs canonicalize to `tiktok.com/@user/video/<id>` with all query params dropped, since share links carry per-share ids that would break dedup. No transcript path exists: a TikTok whose recipe is only spoken in the video isn't extractable (same boundary as Instagram reels). |
 
 ---
 
@@ -326,6 +327,13 @@ messages for the full reasoning behind each.
 - **YouTube transcripts are the flakiest dependency.** The official Data API doesn't expose captions for videos you don't own; unofficial transcript scrapers break periodically. Description-first always; transcript best-effort with graceful partial saves ("saved with partial info — open the video to complete").
 - **`web_fetch` will bounce off bot-blocked recipe sites** (Cloudflare et al.). Fallback: the extension *is* a browser — it fetches the URL client-side and ships raw HTML up. Design the ingestion API to accept both "here's a URL" and "here's raw HTML" from day one.
 - **If the ingestion API is hosted publicly** (not localhost), it needs at least a static API key even single-user — otherwise anyone with the URL can write to the library.
+- **TikTok's hydration-state blob is unversioned and proprietary.** Caption extraction reads
+  `__UNIVERSAL_DATA_FOR_REHYDRATION__`, which TikTok can rename or restructure without notice;
+  when it breaks, extraction silently degrades to readability over the visible DOM (workable
+  for extension captures, empty for server-side fetches). Verified against video posts only —
+  photo-mode posts (`/photo/`) normalize correctly but their state shape is unconfirmed, and
+  teaser captions ("full recipe on my site") extract as honest partials. Same fragility class
+  as the YouTube-transcript dependency above.
 - **Voyage free tier without a payment method = 3 requests/min** — one enthusiastic chat turn can exceed it. Mitigated in code: `embedText` retries on 429 with backoff, and search degrades to filters + recency ordering (flagged via `semantic_ranking: false`) instead of failing. Adding a card to the Voyage account lifts the cap; the 200M free tokens still apply.
 
 ---

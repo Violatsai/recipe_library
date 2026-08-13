@@ -29,10 +29,10 @@ Re-run the build after code changes, then hit ↻ on the extension card.
 ## Notes
 
 - Ordinary pages and YouTube are fire-and-forget after the quick **Queued ✓** handoff.
-- Facebook/Instagram/Threads still generate a preview in the popup before saving;
+- Facebook/Instagram/Threads/TikTok still generate a preview in the popup before saving;
   keep the popup open for that preview, then confirm. Facebook uses a synchronous
-  pre-queue compatibility save; Instagram and Threads reuse the confirmed extraction
-  in the worker rather than run a second time. Their confirmation redesign is
+  pre-queue compatibility save; Instagram, Threads, and TikTok reuse the confirmed
+  extraction in the worker rather than run a second time. Their confirmation redesign is
   intentionally deferred until the queue architecture is stable.
 - A toolbar badge shows `…` during handoff, briefly `✓` when the server accepts the
   job, and `!` when capture/delivery fails.

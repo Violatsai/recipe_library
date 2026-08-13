@@ -15,6 +15,28 @@ function isYouTubeHost(host: string): boolean {
   return host === "youtu.be" || host === "youtube.com" || host.endsWith(".youtube.com");
 }
 
+function isTikTokHost(host: string): boolean {
+  return host === "tiktok.com" || host.endsWith(".tiktok.com");
+}
+
+/** Canonical path for a TikTok video/photo post, else null. Share links carry
+ *  per-share params (web_id, sender_device, …) that would break dedup. */
+function tiktokPostPath(u: URL): string | null {
+  if (!isTikTokHost(u.hostname.toLowerCase())) return null;
+  const m = u.pathname.match(/^\/(@[^/]+)\/(video|photo)\/(\d+)/);
+  return m ? `/${m[1]}/${m[2]}/${m[3]}` : null;
+}
+
+/** The numeric post id from a TikTok video/photo URL, else null. */
+export function tiktokPostId(raw: string): string | null {
+  try {
+    const m = new URL(raw).pathname.match(/^\/@[^/]+\/(?:video|photo)\/(\d+)/);
+    return m ? m[1]! : null;
+  } catch {
+    return null;
+  }
+}
+
 /** Return the 11-ish char video id for any YouTube video URL form, else null. */
 export function youtubeVideoId(raw: string): string | null {
   try {
@@ -44,6 +66,9 @@ export function normalizeUrl(raw: string): string {
 
   const ytId = youtubeId(u);
   if (ytId) return `https://www.youtube.com/watch?v=${ytId}`;
+
+  const ttPath = tiktokPostPath(u);
+  if (ttPath) return `https://www.tiktok.com${ttPath}`;
 
   // Strip a trailing slash on the path (but never collapse "/" itself) —
   // "/recipe" and "/recipe/" are the same page and must dedupe identically.

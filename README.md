@@ -12,10 +12,10 @@ it, plans meals, and builds grocery lists over chat.
 ## Features
 
 - **Capture from anywhere:** any recipe web page, a YouTube video (title/description/
-  transcript), a Facebook/Instagram/Threads post, or a photo of a cookbook page/recipe
-  card via Claude's vision. A single source can yield more than one recipe (e.g. a
-  page with two recipes, or a video that walks through several dishes) and each
-  becomes its own library entry.
+  transcript), a Facebook/Instagram/Threads post, a TikTok video (the recipe caption),
+  or a photo of a cookbook page/recipe card via Claude's vision. A single source can
+  yield more than one recipe (e.g. a page with two recipes, or a video that walks
+  through several dishes) and each becomes its own library entry.
 - **Chat agent:** search your library, plan meals, and build a consolidated grocery
   list over conversation. Also manages a pantry-staples list so recurring basics
   (salt, oil, etc.) get left off grocery lists automatically.
@@ -87,14 +87,16 @@ npm run build --workspace extension
 4. Once the popup says **Queued ✓**, you can close it or navigate away; the local server
    continues extraction in the background.
 
-**Facebook/Instagram/Threads:** the popup shows a preview of what it found (the
+**Facebook/Instagram/Threads/TikTok:** the popup shows a preview of what it found (the
 detected recipe title(s)) and waits for you to confirm before saving —
 these apps hydrate post content asynchronously in ways that make a one-shot capture
 unreliable, so the preview step is a deliberate safety check, not an extra step you
 can skip. Keep the popup open while that preview is generated. **Facebook** then saves the
-confirmed snapshot synchronously using its pre-queue compatibility path; Instagram and
-Threads reuse the confirmed extraction before their background handoff. If you just navigated from one post
+confirmed snapshot synchronously using its pre-queue compatibility path; Instagram, Threads,
+and TikTok reuse the confirmed extraction before their background handoff. If you just navigated from one post
 straight to another in the same tab, refresh the page (⌘R) before clicking Save.
+TikTok extraction reads the video's caption — a TikTok whose recipe is only spoken
+in the video (nothing written in the caption) can't be extracted.
 
 **Photo of a recipe** (cookbook page, handwritten card, screenshot): use **"+ Add
 from photo"** in the Library tab of the web app instead of the extension — it goes

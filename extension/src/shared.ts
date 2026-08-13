@@ -55,11 +55,13 @@ export function isYouTube(url: string): boolean {
 
 /** Facebook/Instagram/Threads collapse long captions behind a "see more"
  *  toggle that isn't in the DOM's text until clicked — these hosts need the
- *  expand step before HTML capture. */
+ *  expand step before HTML capture. TikTok is here for the hydration wait and
+ *  preview/confirm; its full caption rides along in the page's hydration-state
+ *  JSON (parsed server-side), so it works even while visually collapsed. */
 export function isSocialCaptionSite(url: string): boolean {
   try {
     const h = new URL(url).hostname.toLowerCase();
-    const bases = ["facebook.com", "instagram.com", "threads.net", "threads.com"];
+    const bases = ["facebook.com", "instagram.com", "threads.net", "threads.com", "tiktok.com"];
     return bases.some((b) => h === b || h.endsWith(`.${b}`));
   } catch {
     return false;
