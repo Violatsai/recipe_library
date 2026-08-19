@@ -9,6 +9,13 @@ it, plans meals, and builds grocery lists over chat.
 - **Build history:** [`docs/execution-plan.md`](docs/execution-plan.md) — milestones M0–M8, plus
   post-MVP additions documented inline in `ARCHITECTURE.md`
 
+## Demo
+
+
+
+https://github.com/user-attachments/assets/c954e3fe-4daf-46f5-879c-24eaeaee9b97
+
+
 ## Features
 
 - **Capture from anywhere:** any recipe web page, a YouTube video (title/description/
